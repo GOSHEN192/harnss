@@ -62,7 +62,6 @@ import * as realtimeVoiceIpc from "./ipc/realtime-voice";
 import { onSettingsChanged } from "./ipc/settings";
 import { RemoteControlBridge } from "./remote-control/bridge";
 import { RemoteControlServer } from "./remote-control/server";
-import { CoveRuntimeManager } from "./cove/runtime-manager";
 import { TelegramChannel } from "./telegram/channel";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
@@ -81,7 +80,6 @@ let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 const remoteControlBridge = new RemoteControlBridge(getMainWindow);
 const remoteControlServer = new RemoteControlServer(remoteControlBridge);
-const coveRuntimeManager = new CoveRuntimeManager();
 const telegramChannel = new TelegramChannel(remoteControlBridge, getMainWindow);
 const realtimeVoiceManager = realtimeVoiceIpc.register(getMainWindow);
 
@@ -431,7 +429,6 @@ telegramIpc.register(telegramChannel);
 let lastAnalyticsEnabled: boolean | undefined;
 let lastTelegramEnabled = getAppSettings().telegramEnabled;
 let lastRealtimeVoiceConfig = JSON.stringify(getAppSettings().realtimeVoice);
-let lastRemoteEnabled = getAppSettings().remoteEnabled;
 onSettingsChanged((settings) => {
   if (lastAnalyticsEnabled !== undefined && settings.analyticsEnabled !== lastAnalyticsEnabled) {
     lastAnalyticsEnabled = settings.analyticsEnabled;
@@ -444,18 +441,6 @@ onSettingsChanged((settings) => {
   void remoteControlServer.reconfigure().catch((err) => {
     reportError("REMOTE", err, { context: "reconfigure" });
   });
-  if (settings.remoteEnabled !== lastRemoteEnabled) {
-    lastRemoteEnabled = settings.remoteEnabled;
-    if (settings.remoteEnabled) {
-      void coveRuntimeManager.start().catch((err) => {
-        reportError("COVE", err, { context: "remote-enabled" });
-      });
-    } else {
-      void coveRuntimeManager.stop().catch((err) => {
-        reportError("COVE", err, { context: "remote-disabled" });
-      });
-    }
-  }
   if (settings.telegramEnabled !== lastTelegramEnabled) {
     lastTelegramEnabled = settings.telegramEnabled;
     void telegramChannel.reconfigure().catch((err) => {
@@ -586,11 +571,6 @@ app.whenReady().then(() => {
   void remoteControlServer.start().catch((err) => {
     reportError("REMOTE", err, { context: "startup" });
   });
-  if (getAppSettings().remoteEnabled) {
-    void coveRuntimeManager.start().catch((err) => {
-      reportError("COVE", err, { context: "startup" });
-    });
-  }
   void telegramChannel.start().catch((err) => {
     reportError("TELEGRAM", err, { context: "startup" });
   });
@@ -648,7 +628,6 @@ app.on("will-quit", (event) => {
       remoteControlServer.stop(),
       telegramChannel.stop(),
       realtimeVoiceManager.dispose(),
-      coveRuntimeManager.stop(),
     ]);
     remoteControlBridge.dispose();
     void shutdownPostHog();
@@ -668,7 +647,6 @@ app.on("will-quit", (event) => {
         remoteControlServer.stop(),
         telegramChannel.stop(),
         realtimeVoiceManager.dispose(),
-        coveRuntimeManager.stop(),
       ])
         .finally(() => {
           remoteControlBridge.dispose();

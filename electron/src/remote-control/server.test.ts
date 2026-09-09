@@ -69,15 +69,14 @@ describe("remote control server", () => {
     expect(scriptText).toContain("snapshot.revision<previous.revision");
     expect(scriptText).toContain("conversation.innerHTML=");
     expect(scriptText).toContain("void loadSessions();if(selectedId)void loadSnapshot(selectedId)");
-    expect(scriptText).toContain('location.href="/cove/"');
+    // 2026-09-09：COVE 语音页已移除（语音由 L'Agents 原生 App 承担），
+    // 页面不再有入口，/cove/ 静态资源与 /voice WS 升级均应拒绝。
+    expect(scriptText).not.toContain("/cove/");
 
-    const covePage = await fetch(`http://127.0.0.1:${port}/cove/`);
-    expect(covePage.status).toBe(200);
-    await expect(covePage.text()).resolves.toContain("VoiceWebSocketTransport");
-
-    const coveTransport = await fetch(`http://127.0.0.1:${port}/cove/ws-transport.js`);
-    expect(coveTransport.status).toBe(200);
-    await expect(coveTransport.text()).resolves.toContain('["harnss-voice", token]');
+    const covePage = await fetch(`http://127.0.0.1:${port}/cove/`, {
+      headers: { authorization: "Bearer test-remote-token" },
+    });
+    expect(covePage.status).toBe(404);
 
     const traversal = await fetch(`http://127.0.0.1:${port}/cove/%2e%2e/package.json`, {
       headers: { authorization: "Bearer test-remote-token" },

@@ -1,12 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
 import type { AddressInfo } from "net";
-import fs from "fs";
-import path from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { getAppSettings } from "../lib/app-settings";
 import { log } from "../lib/logger";
-import { getCoveFrontendDir, getCoveVoicePort } from "../cove/runtime-manager";
 import type {
   RemoteApprovalInput,
   RemoteServerEvent,
@@ -65,7 +62,7 @@ main{padding-bottom:104px}
 .home-hero{padding:20px;border:1px solid #d0d7de;border-radius:20px;background:linear-gradient(135deg,#fff,#f1f8ff);box-shadow:0 1px 2px rgba(31,35,40,.04)}.home-hero h1{margin:5px 0 8px;color:#1f2328;font-size:26px;letter-spacing:-.04em}.home-hero p{margin:0;color:#656d76;font-size:13px;line-height:1.5}.home-section{margin-top:22px}.home-section .section-header{margin-bottom:10px}.section-link{padding:0;background:none;color:#0969da;font-size:12px;font-weight:700}.attention-summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid #d4a72c;border-radius:16px;background:#fff8c5;color:#7d4e00}.attention-summary strong{display:block;color:#7d4e00;font-size:14px}.attention-summary span{display:block;margin-top:3px;font-size:12px}.attention-summary .summary-icon{display:grid;place-items:center;flex:0 0 34px;width:34px;height:34px;border-radius:11px;background:#fff1b8;color:#9a6700;font-weight:800}.mini-session-list{display:grid;gap:8px}.bottom-nav{position:fixed;z-index:20;right:0;bottom:0;left:0;display:grid;grid-template-columns:repeat(3,1fr);max-width:760px;margin:0 auto;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid #d0d7de;background:rgba(255,255,255,.96);backdrop-filter:blur(16px)}.nav-item{position:relative;display:grid;justify-items:center;gap:4px;padding:5px 4px;border-radius:10px;background:none;color:#656d76;font-size:10px;font-weight:700}.nav-item svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.nav-item.active{color:#0969da;background:#ddf4ff}.nav-badge{position:absolute;top:1px;right:calc(50% - 18px);display:grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:#cf222e;color:#fff;font-size:9px}
 .auth-card{border-color:#d0d7de;background:#fff;box-shadow:0 12px 32px rgba(31,35,40,.08)}.auth-card h1{color:#1f2328}.auth-card p{color:#656d76}.auth-card label{color:#424a53}.auth-card input{border-color:#d0d7de;background:#fff;color:#1f2328}.auth-card .primary{background:#1f883d;color:#fff}.primary:disabled,.secondary:disabled{cursor:not-allowed;opacity:.5}
 .agent-actions{margin:0 0 14px;padding:14px;border:1px solid #d0d7de;border-radius:16px;background:#fff}.agent-actions-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.agent-actions-heading strong{display:block;margin-top:4px;color:#1f2328;font-size:14px}.agent-actions-heading>span{color:#656d76;font-size:11px}.action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.action-button{min-height:40px;padding:9px 11px;border:1px solid #d0d7de;border-radius:11px;background:#f6f8fa;color:#424a53;font-size:12px;font-weight:750}.action-button:hover{border-color:#54aeff;color:#0969da}.action-button.danger-action{border-color:#ff8182;background:#fff;color:#cf222e}.action-note{grid-column:1/-1;padding:9px 10px;color:#656d76;font-size:11px}
-.language-toggle{min-width:42px;height:36px;padding:0 9px;border:1px solid #d0d7de;border-radius:11px;background:#fff;color:#424a53;font-size:11px;font-weight:800}.language-toggle:hover{border-color:#54aeff;color:#0969da}.cove-button{width:auto;padding:0 10px;font-size:11px;font-weight:800;color:#0969da}.cove-button:hover{border-color:#54aeff;background:#ddf4ff}.auth-actions{display:flex;justify-content:flex-end;margin:-8px -6px 8px}
+.language-toggle{min-width:42px;height:36px;padding:0 9px;border:1px solid #d0d7de;border-radius:11px;background:#fff;color:#424a53;font-size:11px;font-weight:800}.language-toggle:hover{border-color:#54aeff;color:#0969da}.auth-actions{display:flex;justify-content:flex-end;margin:-8px -6px 8px}
 @media (min-width:640px){main{padding-bottom:112px}}
 
 /* v2 mobile polish: chat ergonomics, markdown, tool grouping. */
@@ -179,7 +176,7 @@ let isZh=(localStorage.getItem("harnss-remote-language")||(/^(zh)/i.test(navigat
 document.documentElement.lang=isZh?"zh-CN":"en";
 const text=(en,zh)=>isZh?zh:en;
 const createLabels=()=>({
-  app:text("Remote control","远程控制"),overview:text("Overview","总览"),sessions:text("Sessions","会话"),approvals:text("Approvals","审批"),cove:text("COVE Voice","COVE 语音"),refresh:text("Refresh","刷新"),connected:text("Live","已连接"),
+  app:text("Remote control","远程控制"),overview:text("Overview","总览"),sessions:text("Sessions","会话"),approvals:text("Approvals","审批"),refresh:text("Refresh","刷新"),connected:text("Live","已连接"),
   offline:text("Offline","离线"),all:text("All","全部"),working:text("Working","运行中"),approval:text("Needs approval","待审批"),
   active:text("active","运行中"),needsAttention:text("needs attention","待处理"),noSessions:text("No sessions yet","暂无会话"),
   noSessionsHint:text("Start an agent session in Harnss to see it here.","在 Harnss 中启动一个代理会话后，它会显示在这里。"),
@@ -230,7 +227,7 @@ function navHtml(active,attention){return'<nav class="bottom-nav" aria-label="'+
 function matchesSession(session,query){return!query||[session.title,session.projectName,session.projectId,session.engine,session.model].some(value=>String(value||"").toLowerCase().includes(query))}
 function orderedSessions(items){return items.slice().sort((a,b)=>(sessionRank(a)-sessionRank(b))||((b.lastMessageAt||b.createdAt||0)-(a.lastMessageAt||a.createdAt||0)))}
 function listMarkup(items){return items.length?'<section class="session-list">'+orderedSessions(items).map(sessionCard).join("")+'</section>':'<div class="empty-state"><strong>'+labels.noSessions+'</strong>'+labels.noSessionsHint+'</div>'}
-function renderList(){const active=sessions.filter(session=>session.isProcessing).length,attention=sessions.filter(session=>session.hasPendingPermission).length;const query=search.trim().toLowerCase();const matching=sessions.filter(session=>matchesSession(session,query));const filtered=matching.filter(session=>filter==="all"||(filter==="working"&&session.isProcessing)||(filter==="approval"&&session.hasPendingPermission));const recent=orderedSessions(matching).slice(0,3);let body="";if(view==="overview"){const attentionBody=attention?'<button class="attention-summary" data-view="approvals"><span class="summary-icon">!</span><span><strong>'+attention+" "+labels.approval+'</strong><span>'+labels.needsAction+'</span></span>'+icon("arrow")+'</button>':'<div class="attention-summary"><span class="summary-icon">✓</span><span><strong>'+labels.allClear+'</strong><span>'+labels.allClearHint+'</span></span></div>';body='<section class="home-hero"><p class="kicker">'+labels.today+'</p><h1>'+labels.overviewTitle+'</h1><p>'+labels.overviewHint+'</p></section><section class="overview-card"><div class="metric"><span class="metric-value">'+sessions.length+'</span><span class="metric-label">'+labels.sessions+'</span></div><div class="metric"><span class="metric-value">'+active+'</span><span class="metric-label">'+labels.active+'</span></div><div class="metric"><span class="metric-value">'+attention+'</span><span class="metric-label">'+labels.needsAttention+'</span></div></section><section class="home-section"><div class="section-header"><h2>'+labels.needsAction+'</h2><span>'+attention+'</span></div>'+attentionBody+'</section><section class="home-section"><div class="section-header"><h2>'+labels.recentActivity+'</h2><button class="section-link" data-view="sessions">'+labels.seeAll+'</button></div>'+listMarkup(recent)+'</section>'}else{const title=view==="approvals"?labels.approvals:labels.sessions;const list=view==="approvals"?filtered.filter(session=>session.hasPendingPermission):filtered;body='<section class="page-heading"><p class="kicker">'+labels.app+'</p><h1>'+title+'</h1><p class="subtitle">'+(view==="approvals"?labels.needsAction:text("Monitor every agent from one place.","从一个地方掌控所有代理。"))+'</p></section>'+(view==="sessions"?'<div class="toolbar"><label class="search-box">'+icon("search")+'<input id="search" type="search" value="'+esc(search)+'" placeholder="'+labels.search+'" autocomplete="off"></label><div class="filters"><button class="filter '+(filter==="all"?"active":"")+'" data-filter="all">'+labels.all+'</button><button class="filter '+(filter==="working"?"active":"")+'" data-filter="working">'+labels.working+'</button><button class="filter '+(filter==="approval"?"active":"")+'" data-filter="approval">'+labels.approval+'</button></div></div>':"")+'<div class="section-header"><h2>'+title+'</h2><span>'+list.length+'</span></div>'+(loading&&!sessions.length?'<div class="loading-card">'+labels.loading+'</div>':listMarkup(list))}root.innerHTML='<div class="topbar"><div class="brand-lockup"><div class="brand-mark">H</div><div><p class="eyebrow">HARNSS</p><p class="topbar-title">'+labels.app+'</p></div></div><div class="topbar-actions">'+languageToggleHtml()+connectionHtml()+'<button class="icon-button cove-button" id="cove" type="button" title="'+labels.cove+'">'+labels.cove+'</button><button class="icon-button" id="refresh" aria-label="'+labels.refresh+'" title="'+labels.refresh+'">'+icon("refresh")+'</button></div></div>'+body+navHtml(view,attention);bindLanguageToggle();document.getElementById("cove").onclick=()=>{location.href="/cove/"};document.getElementById("refresh").onclick=()=>loadSessions();document.querySelectorAll("[data-view]").forEach(button=>button.onclick=()=>{view=button.dataset.view;renderList()});if(view==="sessions"){const searchInput=document.getElementById("search");searchInput.oninput=event=>{search=event.target.value;renderList();const next=document.getElementById("search");next.focus();next.setSelectionRange(search.length,search.length)}}document.querySelectorAll("[data-filter]").forEach(button=>button.onclick=()=>{filter=button.dataset.filter;renderList()});document.querySelectorAll("[data-session-id]").forEach(button=>button.onclick=()=>selectSession(button.dataset.sessionId))}
+function renderList(){const active=sessions.filter(session=>session.isProcessing).length,attention=sessions.filter(session=>session.hasPendingPermission).length;const query=search.trim().toLowerCase();const matching=sessions.filter(session=>matchesSession(session,query));const filtered=matching.filter(session=>filter==="all"||(filter==="working"&&session.isProcessing)||(filter==="approval"&&session.hasPendingPermission));const recent=orderedSessions(matching).slice(0,3);let body="";if(view==="overview"){const attentionBody=attention?'<button class="attention-summary" data-view="approvals"><span class="summary-icon">!</span><span><strong>'+attention+" "+labels.approval+'</strong><span>'+labels.needsAction+'</span></span>'+icon("arrow")+'</button>':'<div class="attention-summary"><span class="summary-icon">✓</span><span><strong>'+labels.allClear+'</strong><span>'+labels.allClearHint+'</span></span></div>';body='<section class="home-hero"><p class="kicker">'+labels.today+'</p><h1>'+labels.overviewTitle+'</h1><p>'+labels.overviewHint+'</p></section><section class="overview-card"><div class="metric"><span class="metric-value">'+sessions.length+'</span><span class="metric-label">'+labels.sessions+'</span></div><div class="metric"><span class="metric-value">'+active+'</span><span class="metric-label">'+labels.active+'</span></div><div class="metric"><span class="metric-value">'+attention+'</span><span class="metric-label">'+labels.needsAttention+'</span></div></section><section class="home-section"><div class="section-header"><h2>'+labels.needsAction+'</h2><span>'+attention+'</span></div>'+attentionBody+'</section><section class="home-section"><div class="section-header"><h2>'+labels.recentActivity+'</h2><button class="section-link" data-view="sessions">'+labels.seeAll+'</button></div>'+listMarkup(recent)+'</section>'}else{const title=view==="approvals"?labels.approvals:labels.sessions;const list=view==="approvals"?filtered.filter(session=>session.hasPendingPermission):filtered;body='<section class="page-heading"><p class="kicker">'+labels.app+'</p><h1>'+title+'</h1><p class="subtitle">'+(view==="approvals"?labels.needsAction:text("Monitor every agent from one place.","从一个地方掌控所有代理。"))+'</p></section>'+(view==="sessions"?'<div class="toolbar"><label class="search-box">'+icon("search")+'<input id="search" type="search" value="'+esc(search)+'" placeholder="'+labels.search+'" autocomplete="off"></label><div class="filters"><button class="filter '+(filter==="all"?"active":"")+'" data-filter="all">'+labels.all+'</button><button class="filter '+(filter==="working"?"active":"")+'" data-filter="working">'+labels.working+'</button><button class="filter '+(filter==="approval"?"active":"")+'" data-filter="approval">'+labels.approval+'</button></div></div>':"")+'<div class="section-header"><h2>'+title+'</h2><span>'+list.length+'</span></div>'+(loading&&!sessions.length?'<div class="loading-card">'+labels.loading+'</div>':listMarkup(list))}root.innerHTML='<div class="topbar"><div class="brand-lockup"><div class="brand-mark">H</div><div><p class="eyebrow">HARNSS</p><p class="topbar-title">'+labels.app+'</p></div></div><div class="topbar-actions">'+languageToggleHtml()+connectionHtml()+<button class="icon-button" id="refresh" aria-label="'+labels.refresh+'" title="'+labels.refresh+'">'+icon("refresh")+'</button></div></div>'+body+navHtml(view,attention);bindLanguageToggle();document.getElementById("refresh").onclick=()=>loadSessions();document.querySelectorAll("[data-view]").forEach(button=>button.onclick=()=>{view=button.dataset.view;renderList()});if(view==="sessions"){const searchInput=document.getElementById("search");searchInput.oninput=event=>{search=event.target.value;renderList();const next=document.getElementById("search");next.focus();next.setSelectionRange(search.length,search.length)}}document.querySelectorAll("[data-filter]").forEach(button=>button.onclick=()=>{filter=button.dataset.filter;renderList()});document.querySelectorAll("[data-session-id]").forEach(button=>button.onclick=()=>selectSession(button.dataset.sessionId))}
 
 function taskProgressHtml(message){const steps=message.subagentSteps||[];if(!steps.length)return"";const completed=steps.filter(step=>step.status==="completed").length,percent=message.subagentStatus==="completed"?100:Math.round(completed/steps.length*100);return'<div class="task-progress"><div class="task-progress-head"><span>'+labels.subagentProgress+'</span><span>'+completed+'/'+steps.length+" "+labels.steps+'</span></div><div class="task-progress-bar"><span style="width:'+percent+'%"></span></div><div class="task-steps">'+steps.map(step=>'<div class="task-step '+(step.status==="completed"?"done":step.status==="error"?"error":"")+'">'+esc(step.toolName)+'</div>').join("")+'</div></div>'}
 function mdLite(src){let s=esc(src);const tick=String.fromCharCode(96);s=s.replace(new RegExp(tick+tick+tick+"[\\\\w-]*\\\\n?([\\\\s\\\\S]*?)"+tick+tick+tick,"g"),function(_,code){return'<pre class="md-code">'+code.replace(/\\n+$/,"")+'</pre>'});s=s.replace(new RegExp(tick+"([^"+tick+"\\n]+)"+tick,"g"),'<code class="md-inline">$1</code>');s=s.replace(/\\*\\*([^*\\n]+)\\*\\*/g,'<strong>$1</strong>');s=s.replace(/^#{1,3} +(.+)$/gm,'<strong class="md-h">$1</strong>');return s}
@@ -275,28 +272,6 @@ const MAX_AGENT_ICON_CACHE_ENTRIES = 32;
 const agentIconCache = new Map<string, Buffer>();
 
 const REMOTE_SW_JS = `const CACHE="harnss-remote-v4";self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method==="GET"&&url.origin===location.origin&&!url.pathname.startsWith("/api/")){event.respondWith(caches.open(CACHE).then(async cache=>{try{const response=await fetch(event.request);cache.put(event.request,response.clone());return response}catch(_){return (await cache.match(event.request))||new Response("Offline",{status:503})}}))}});`;
-const COVE_ASSETS = new Set([
-  "audio-codec.js",
-  "audio-playback.js",
-  "barge-in-detector.js",
-  "call-runtime.js",
-  "endpoint-detector.js",
-  "index.html",
-  "listener-cues.js",
-  "media-capture.js",
-  "ordered-tts-queue.js",
-  "pcm-worklet.js",
-  "voice-ui.js",
-  "wake-loop.js",
-  "ws-transport.js",
-]);
-const COVE_MIME_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".wasm": "application/wasm",
-};
 
 function tokenMatches(provided: string | null, expected: string): boolean {
   if (!provided || !expected) return false;
@@ -308,12 +283,6 @@ function tokenMatches(provided: string | null, expected: string): boolean {
 function getBearerToken(request: IncomingMessage, allowQueryToken = false): string | null {
   const authorization = request.headers.authorization;
   if (authorization?.startsWith("Bearer ")) return authorization.slice("Bearer ".length).trim();
-  const protocols = request.headers["sec-websocket-protocol"];
-  if (typeof protocols === "string") {
-    const values = protocols.split(",").map((value) => value.trim());
-    const tokenIndex = values.indexOf("harnss-voice");
-    if (tokenIndex >= 0 && values[tokenIndex + 1]) return values[tokenIndex + 1];
-  }
   if (!allowQueryToken) return null;
   try {
     return new URL(request.url ?? "/", "http://localhost").searchParams.get("token");
@@ -381,12 +350,7 @@ export class RemoteControlServer {
     void this.handleRequest(request, response);
   });
   private readonly webSockets = new WebSocketServer({ noServer: true });
-  private readonly coveWebSockets = new WebSocketServer({
-    noServer: true,
-    handleProtocols: (protocols) => protocols.has("harnss-voice") ? "harnss-voice" : "",
-  });
   private readonly clients = new Set<WebSocket>();
-  private readonly coveClients = new Set<WebSocket>();
   private unsubscribeBridge: (() => void) | null = null;
   private listening = false;
   private activePort: number | null = null;
@@ -396,16 +360,22 @@ export class RemoteControlServer {
     this.server.on("upgrade", (request, socket, head) => {
       const settings = getAppSettings();
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-      const token = getBearerToken(request, pathname !== "/voice");
+      if (pathname === "/voice") {
+        // 2026-09-09：COVE 语音页已移除（语音由 L'Agents 原生 App 承担），
+        // 旧语音 WS 入口直接拒绝，避免半可用状态。
+        socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const token = getBearerToken(request, true);
       if (!tokenMatches(token, settings.remoteToken)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         socket.destroy();
         return;
       }
 
-      const webSocketServer = pathname === "/voice" ? this.coveWebSockets : this.webSockets;
-      webSocketServer.handleUpgrade(request, socket, head, (client) => {
-        webSocketServer.emit("connection", client, request);
+      this.webSockets.handleUpgrade(request, socket, head, (client) => {
+        this.webSockets.emit("connection", client, request);
       });
     });
 
@@ -417,39 +387,6 @@ export class RemoteControlServer {
       } satisfies RemoteServerEvent));
       client.on("close", () => this.clients.delete(client));
       client.on("error", () => this.clients.delete(client));
-    });
-
-    this.coveWebSockets.on("connection", (client: WebSocket) => {
-      this.coveClients.add(client);
-      client.once("close", () => this.coveClients.delete(client));
-      client.once("error", () => this.coveClients.delete(client));
-      const port = getCoveVoicePort();
-      const upstream = new WebSocket(`ws://127.0.0.1:${port}`);
-      const closeBoth = (code = 1011, reason = "COVE runtime unavailable") => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ event: "voice_state", mode: "error", message: reason }));
-        }
-        if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) client.close(code, reason);
-        if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) upstream.close();
-      };
-      upstream.on("open", () => {
-        client.on("message", (message, isBinary) => {
-          if (upstream.readyState === WebSocket.OPEN) {
-            upstream.send(isBinary ? message : message.toString());
-          }
-        });
-        client.on("close", closeBoth);
-        client.on("error", closeBoth);
-      });
-      upstream.on("message", (message, isBinary) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(isBinary ? message : message.toString());
-        }
-      });
-      upstream.on("close", () => {
-        if (client.readyState === WebSocket.OPEN) client.close();
-      });
-      upstream.on("error", () => closeBoth());
     });
   }
 
@@ -510,8 +447,6 @@ export class RemoteControlServer {
     this.unsubscribeBridge = null;
     for (const client of this.clients) client.close(1001, "Server stopping");
     this.clients.clear();
-    for (const client of this.coveClients) client.close(1001, "Server stopping");
-    this.coveClients.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     this.listening = false;
     this.activePort = null;
@@ -588,48 +523,6 @@ export class RemoteControlServer {
     if (request.method === "GET" && url.pathname === "/remote-sw.js") {
       response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" });
       response.end(REMOTE_SW_JS);
-      return;
-    }
-    if (request.method === "GET" && (url.pathname === "/cove/" || url.pathname.startsWith("/cove/"))) {
-      const encodedFile = url.pathname === "/cove/" ? "index.html" : url.pathname.slice("/cove/".length);
-      let file = "";
-      try {
-        file = decodeURIComponent(encodedFile);
-      } catch {
-        response.writeHead(404);
-        response.end();
-        return;
-      }
-      if (!COVE_ASSETS.has(file) || file.includes("/") || file.includes("\\") || file === "." || file === "..") {
-        response.writeHead(404);
-        response.end();
-        return;
-      }
-      const frontendRoot = path.resolve(getCoveFrontendDir());
-      const assetPath = path.resolve(frontendRoot, file);
-      if (!assetPath.startsWith(`${frontendRoot}${path.sep}`)) {
-        response.writeHead(404);
-        response.end();
-        return;
-      }
-      try {
-        const body = await fs.promises.readFile(assetPath);
-        const extension = path.extname(file).toLowerCase();
-        response.writeHead(200, {
-          "content-type": COVE_MIME_TYPES[extension] ?? "application/octet-stream",
-          "cache-control": file === "index.html" ? "no-store" : "public, max-age=3600",
-          ...(file === "index.html"
-            ? {
-                "content-security-policy": "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
-                "permissions-policy": "microphone=(self)",
-              }
-            : {}),
-        });
-        response.end(body);
-      } catch {
-        response.writeHead(404);
-        response.end();
-      }
       return;
     }
     // Agent icons are proxied same-origin because the page CSP only allows
