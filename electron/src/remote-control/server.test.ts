@@ -46,7 +46,7 @@ describe("remote control server", () => {
 
     const landingPage = await fetch(`http://127.0.0.1:${port}/`);
     expect(landingPage.status).toBe(200);
-    await expect(landingPage.text()).resolves.toContain("Harnss Remote");
+    await expect(landingPage.text()).resolves.toContain("L'Agents WebUI");
 
     const authorized = await fetch(`http://127.0.0.1:${port}/api/health`, {
       headers: { authorization: "Bearer test-remote-token" },
