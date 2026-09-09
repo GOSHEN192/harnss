@@ -64,6 +64,21 @@ import { RemoteControlBridge } from "./remote-control/bridge";
 import { RemoteControlServer } from "./remote-control/server";
 import { TelegramChannel } from "./telegram/channel";
 
+// --- Single instance lock（2026-09-09）---
+// LaunchAgent 常驻拉起 + 用户手动点 Dock 会产生第二实例；无锁时两个实例
+// 会抢 8787 端口（remote control server 绑定失败）。拿到锁的实例继续跑，
+// 后启动的实例直接退出。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
 app.commandLine.appendSwitch("enable-zero-copy"); // avoid CPU→GPU memory copies for tiles
