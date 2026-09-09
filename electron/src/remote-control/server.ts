@@ -176,10 +176,11 @@ html[data-theme="light"] .detail-topbar{background:rgba(255,255,255,.88);backgro
 .action-note{font-size:11.5px;color:var(--muted)}
 .conversation{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;padding:2px 0 10px}
 .message{background:none;border:0;border-radius:0;padding:2px 2px;min-width:0;max-width:100%}
-.message.user{background:none;border:0;border-radius:0;padding:2px 2px;max-width:100%}
-.message.user .message-body{color:#e6d29a}
-html[data-theme="light"] .message.user .message-body{color:#7d6023}
-.message.user .message-foot{justify-content:flex-start}
+.message.user{background:rgba(216,181,106,.14);border:1px solid rgba(216,181,106,.3);border-radius:16px 16px 5px 16px;padding:8px 13px;margin-left:auto;width:fit-content;max-width:82%}
+html[data-theme="light"] .message.user{background:rgba(168,130,58,.12);border-color:rgba(168,130,58,.32)}
+.message.user .message-body{color:#ecdba6}
+html[data-theme="light"] .message.user .message-body{color:#6e5420}
+.message.user .message-foot{justify-content:flex-end}
 .message.assistant.streaming{border-left:2px solid var(--accent);padding-left:9px}
 .message-foot{display:flex;align-items:center;gap:8px;margin-top:4px}
 .message.user .message-foot{justify-content:flex-end}
@@ -424,7 +425,7 @@ const AGENT_ICON_BASE_URL = "https://cdn.agentclientprotocol.com/registry/v1/lat
 const MAX_AGENT_ICON_CACHE_ENTRIES = 32;
 const agentIconCache = new Map<string, Buffer>();
 
-const REMOTE_SW_JS = `const CACHE="harnss-remote-v11";self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method==="GET"&&url.origin===location.origin&&!url.pathname.startsWith("/api/")){event.respondWith(caches.open(CACHE).then(async cache=>{try{const response=await fetch(event.request);cache.put(event.request,response.clone());return response}catch(_){return (await cache.match(event.request))||new Response("Offline",{status:503})}}))}});`;
+const REMOTE_SW_JS = `const CACHE="harnss-remote-v12";self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method==="GET"&&url.origin===location.origin&&!url.pathname.startsWith("/api/")){event.respondWith(caches.open(CACHE).then(async cache=>{try{const response=await fetch(event.request);cache.put(event.request,response.clone());return response}catch(_){return (await cache.match(event.request))||new Response("Offline",{status:503})}}))}});`;
 
 function tokenMatches(provided: string | null, expected: string): boolean {
   if (!provided || !expected) return false;
