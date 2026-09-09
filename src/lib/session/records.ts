@@ -1,9 +1,15 @@
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
 import type { ChatSession, ClaudeEffort, ContextUsage, PersistedSession, UIMessage } from "@/types";
 
-const VALID_EFFORTS = new Set<string>(["low", "medium", "high", "max"]);
+export const CLAUDE_EFFORTS = ["low", "medium", "high", "max"] as const satisfies readonly ClaudeEffort[];
+const VALID_EFFORTS = new Set<string>(CLAUDE_EFFORTS);
+
+export function isClaudeEffort(value: string): value is ClaudeEffort {
+  return VALID_EFFORTS.has(value);
+}
+
 function toClaudeEffort(value: string | undefined): ClaudeEffort | undefined {
-  return value && VALID_EFFORTS.has(value) ? (value as ClaudeEffort) : undefined;
+  return value && isClaudeEffort(value) ? value : undefined;
 }
 
 export function toChatSession(
@@ -24,6 +30,7 @@ export function toChatSession(
     isActive,
     engine: session.engine,
     codexThreadId: session.codexThreadId,
+    workingDirectory: session.workingDirectory,
     folderId: session.folderId,
     pinned: session.pinned,
     branch: session.branch,
@@ -55,6 +62,8 @@ export function buildPersistedSession(
     branch: session.branch,
     ...(session.agentId ? { agentId: session.agentId } : {}),
     ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
+    ...(session.workingDirectory ? { workingDirectory: session.workingDirectory } : {}),
     ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
+    ...(session.cachedConfigOptions?.length ? { cachedConfigOptions: session.cachedConfigOptions } : {}),
   };
 }

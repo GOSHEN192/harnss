@@ -312,9 +312,14 @@ async function createAcpConnection(
   getMainWindow: () => BrowserWindow | null,
   logLabel: string,
   onSpawn?: (internalId: string, proc: ChildProcess) => void,
+  preferredId?: string,
 ): Promise<AcpConnectionResult> {
   const acp = await getACP();
-  const internalId = crypto.randomUUID();
+  // Revives reuse the existing Harnss session id so the session is never renamed —
+  // renaming orphaned the on-disk transcript (duplicate sessions after restart) and
+  // broke remote clients watching the old id.
+  const internalId = preferredId ?? crypto.randomUUID();
+  let startupStderr = "";
 
   const proc = spawn(agentDef.binary, agentDef.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -338,6 +343,7 @@ async function createAcpConnection(
 
   proc.stderr?.on("data", (chunk: Buffer) => {
     const raw = chunk.toString().trim();
+    startupStderr = `${startupStderr}\n${raw}`.trim().slice(-4000);
     log("ACP_STDERR", `session=${internalId.slice(0, 8)} ${raw}`);
     const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
     const turnError = cleaned.match(/Unhandled error during turn:\s*(.+)$/)?.[1]?.trim();
@@ -367,6 +373,15 @@ async function createAcpConnection(
   const output = Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>;
   const stream = acp.ndJsonStream(input, output);
   const pendingPermissions = new Map<string, { resolve: (r: RequestPermissionResponse) => void }>();
+  const processExitDuringStartup = new Promise<never>((_, reject) => {
+    proc.once("error", (err) => {
+      reject(new Error(`ACP process failed to start: ${err.message}`));
+    });
+    proc.once("exit", (code, signal) => {
+      const details = startupStderr ? `: ${startupStderr}` : "";
+      reject(new Error(`ACP process exited before initialization (code=${code ?? "null"} signal=${signal ?? "none"})${details}`));
+    });
+  });
 
   const connection = new acp.ClientSideConnection((_agent) => ({
     async sessionUpdate(params: Record<string, unknown>) {
@@ -472,10 +487,17 @@ async function createAcpConnection(
 
   // Protocol initialization
   log(logLabel, `Initializing protocol...`);
-  const initResult = await withTimeout(connection.initialize({
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: ACP_CLIENT_CAPABILITIES,
-  }), ACP_INIT_TIMEOUT_MS, `${agentDef.name} ACP initialize`);
+  const initResult = await withTimeout(
+    Promise.race([
+      connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+      }),
+      processExitDuringStartup,
+    ]),
+    ACP_INIT_TIMEOUT_MS,
+    `${agentDef.name} ACP initialize`,
+  );
   const supportsLoadSession = initResult.agentCapabilities?.loadSession === true;
   const authMethods = normalizeAcpAuthMethods((initResult as Record<string, unknown>).authMethods);
   log(logLabel, `Initialized protocol v${initResult.protocolVersion} for ${agentDef.name} (loadSession=${supportsLoadSession}, authMethods=${authMethods.length})`);
@@ -649,6 +671,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     cwd: string;
     agentSessionId?: string; // ACP-side session ID from previous run
     mcpServers?: McpServerInput[];
+    sessionId?: string; // Existing Harnss session id — revived process reuses it (no rename)
   }) => {
     log("ACP_REVIVE", `agentId=${options.agentId} agentSessionId=${options.agentSessionId?.slice(0, 12) ?? "none"} cwd=${options.cwd}`);
 
@@ -660,7 +683,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     let connResult: AcpConnectionResult | null = null;
     const analyticsProperties = buildAcpAnalyticsProperties(agentDef);
     try {
-      connResult = await createAcpConnection(agentDef as { binary: string; args?: string[]; env?: Record<string, string>; name: string }, getMainWindow, "ACP_REVIVE");
+      connResult = await createAcpConnection(agentDef as { binary: string; args?: string[]; env?: Record<string, string>; name: string }, getMainWindow, "ACP_REVIVE", undefined, options.sessionId);
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
       const acpMcpServers = await buildAcpMcpServers(options.mcpServers ?? []);
@@ -677,8 +700,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         entry.isReloading = false;
         acpSessionId = options.agentSessionId;
         usedLoad = true;
-        configOptions = (loadResult.configOptions ?? configBuffer.get(internalId) ?? []) as unknown[];
-        if (configOptions.length) configBuffer.set(internalId, configOptions);
+        // Same merge/synthesis as session/new — many agents omit configOptions from
+        // session/load, so fall back to the unstable models API instead of showing nothing.
+        configOptions = resolveConfigOptions(loadResult as { configOptions?: unknown[] | null; models?: unknown }, internalId, "ACP_REVIVE");
         log("ACP_REVIVE", `loadSession OK, session=${acpSessionId.slice(0, 12)} configOptions=${configOptions.length}`);
       } else {
         // Fall back to fresh session — UI messages already restored from disk
@@ -728,20 +752,29 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
     try {
       session.lastStderrError = undefined;
-      const result = await session.connection.prompt({
+      const promptResult = session.connection.prompt({
         sessionId: acpSessionId,
         prompt,
       });
-
-      log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
-
-      safeSend(getMainWindow,"acp:turn_complete", {
-        _sessionId: sessionId,
-        stopReason: result.stopReason,
-        usage: result.usage,
-      });
-
-      return { ok: true };
+      void promptResult
+        .then((result) => {
+          log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
+          safeSend(getMainWindow,"acp:turn_complete", {
+            _sessionId: sessionId,
+            stopReason: result.stopReason,
+            usage: result.usage,
+          });
+        })
+        .catch((err) => {
+          const msg = extractErrorMessage(err);
+          const surfacedError = msg === "Internal error" && session.lastStderrError ? session.lastStderrError : msg;
+          reportError("ACP_PROMPT_ERR", err, { engine: "acp", sessionId, surfacedError });
+          safeSend(getMainWindow,"acp:prompt_error", {
+            _sessionId: sessionId,
+            error: surfacedError,
+          });
+        });
+      return { ok: true, accepted: true };
     } catch (err) {
       const msg = extractErrorMessage(err);
       const surfacedError = msg === "Internal error" && session.lastStderrError ? session.lastStderrError : msg;
@@ -871,9 +904,18 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("acp:set-config", async (_event, { sessionId, configId, value }: { sessionId: string; configId: string; value: string }) => {
-    const session = acpSessions.get(sessionId);
+    let session = acpSessions.get(sessionId);
     if (!session) {
-      log("ACP_CONFIG", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
+      // Revive may still be in flight when the renderer races a setConfig through.
+      // Wait briefly for the live process to appear before declaring it missing.
+      const startedAt = Date.now();
+      while (!session && Date.now() - startedAt < 10_000) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        session = acpSessions.get(sessionId);
+      }
+    }
+    if (!session) {
+      log("ACP_CONFIG", `ERROR: session ${sessionId?.slice(0, 8)} not found (timed out waiting for revive)`);
       return { error: "Session not found" };
     }
     if (!session.acpSessionId) {

@@ -105,6 +105,8 @@ export type {
   NotificationEventSettings,
   NotificationSettings,
   AppSettings,
+  RealtimeVoiceSettings,
+  RealtimeVoiceStatus,
 } from "@shared/types/settings";
 
 // ── Git types (shared) ──
@@ -148,6 +150,7 @@ export type {
   ACPConfigOptionUpdate,
   ACPPermissionEvent,
   ACPTurnCompleteEvent,
+  ACPPromptErrorEvent,
   ACPConfigOption,
   ACPConfigSelectOption,
   ACPConfigSelectGroup,

@@ -222,7 +222,7 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
                   </div>
                 </div>
               </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-56">
+              <DropdownMenuSubContent className="max-h-[calc(100vh-1rem)] w-56 overflow-y-auto">
                 {flat.map((o) => (
                   <DropdownMenuItem
                     key={o.value}
@@ -343,7 +343,7 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
           <DropdownMenuSubTrigger className="bg-accent">
             {agentLabel}
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-56">
+          <DropdownMenuSubContent className="max-h-[calc(100vh-1rem)] w-56 overflow-y-auto">
             {configItems}
           </DropdownMenuSubContent>
         </DropdownMenuSub>

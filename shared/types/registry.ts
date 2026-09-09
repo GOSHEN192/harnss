@@ -12,6 +12,8 @@ export interface InstalledAgent {
   binary?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Working directory to pass to the Agent; useful for remote SSH Agents. */
+  workingDirectory?: string;
   icon?: string;
   builtIn?: boolean;
   /** Matching id from the ACP registry (for update detection) */

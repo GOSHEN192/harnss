@@ -18,6 +18,8 @@ interface PreloadGlobals {
 }
 
 import type { ThemeOption as ThemeSource, MacBackgroundEffect } from "@shared/types/settings";
+import type { RealtimeVoiceState, RealtimeAudioDevice } from "./ipc/realtime-voice";
+import type { RemoteRendererResponse, RemoteServerEvent } from "@shared/types/remote";
 
 function readStoredThemeSource(storage: PreloadStorage | undefined): ThemeSource {
   const stored = storage?.getItem("harnss-theme");
@@ -233,7 +235,7 @@ contextBridge.exposeInMainWorld("claude", {
     stop: (sessionId: string) => ipcRenderer.invoke("acp:stop", sessionId),
     reloadSession: (sessionId: string, mcpServers?: unknown[], cwd?: string) =>
       ipcRenderer.invoke("acp:reload-session", { sessionId, mcpServers, cwd }),
-    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[] }) =>
+    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[]; sessionId?: string }) =>
       ipcRenderer.invoke("acp:revive-session", options),
     cancel: (sessionId: string) => ipcRenderer.invoke("acp:cancel", sessionId),
     abortPendingStart: () => ipcRenderer.invoke("acp:abort-pending-start"),
@@ -259,6 +261,11 @@ contextBridge.exposeInMainWorld("claude", {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("acp:turn_complete", listener);
       return () => ipcRenderer.removeListener("acp:turn_complete", listener);
+    },
+    onPromptError: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("acp:prompt_error", listener);
+      return () => ipcRenderer.removeListener("acp:prompt_error", listener);
     },
     onExit: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
@@ -326,6 +333,8 @@ contextBridge.exposeInMainWorld("claude", {
     checkBinaries: (agents: Array<{ id: string; binary: Record<string, { cmd: string; args?: string[] }> }>) =>
       ipcRenderer.invoke("agents:check-binaries", agents),
     getPlatformKeys: () => ipcRenderer.invoke("agents:get-platform-keys"),
+    browseDirectory: (input: { binary: string; args?: string[]; directory: string }) =>
+      ipcRenderer.invoke("agents:browse-directory", input),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
@@ -335,6 +344,32 @@ contextBridge.exposeInMainWorld("claude", {
       ipcRenderer.on("settings:changed", listener);
       return () => ipcRenderer.removeListener("settings:changed", listener);
     },
+  },
+  telegram: {
+    getStatus: () => ipcRenderer.invoke("telegram:get-status"),
+    setToken: (token: string) => ipcRenderer.invoke("telegram:set-token", token),
+    clearToken: () => ipcRenderer.invoke("telegram:clear-token"),
+    setAllowedUsers: (userIds: string[]) => ipcRenderer.invoke("telegram:set-allowed-users", userIds),
+    setInstructions: (instructions: string) => ipcRenderer.invoke("telegram:set-instructions", instructions),
+    sendVoiceTranscription: (chatId: number, text: string) =>
+      ipcRenderer.invoke("telegram:send-voice-transcription", { chatId, text }),
+    readMedia: (mediaPath: string) => ipcRenderer.invoke("telegram:read-media", mediaPath),
+    notify: (chatId: number, text: string) => ipcRenderer.invoke("telegram:notify", { chatId, text }),
+    onVoice: (callback: (data: { chatId: number; mediaPath: string; mimeType: string }) => void) => {
+      const listener = (_event: IpcRendererEvent, data: { chatId: number; mediaPath: string; mimeType: string }) =>
+        callback(data);
+      ipcRenderer.on("telegram:voice", listener);
+      return () => ipcRenderer.removeListener("telegram:voice", listener);
+    },
+  },
+  remote: {
+    onRequest: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("remote:request", listener);
+      return () => ipcRenderer.removeListener("remote:request", listener);
+    },
+    respond: (response: RemoteRendererResponse) => ipcRenderer.send("remote:response", response),
+    emit: (event: RemoteServerEvent) => ipcRenderer.send("remote:event", event),
   },
   jira: {
     getConfig: (projectId: string) => ipcRenderer.invoke("jira:get-config", projectId),
@@ -369,6 +404,20 @@ contextBridge.exposeInMainWorld("claude", {
     startNativeDictation: () => ipcRenderer.invoke("speech:start-native-dictation"),
     getPlatform: () => ipcRenderer.invoke("speech:get-platform"),
     requestMicPermission: () => ipcRenderer.invoke("speech:request-mic-permission"),
+  },
+  realtimeVoice: {
+    getState: () => ipcRenderer.invoke("realtime-voice:get-state") as Promise<RealtimeVoiceState>,
+    listDevices: () => ipcRenderer.invoke("realtime-voice:list-devices") as Promise<{
+      devices?: RealtimeAudioDevice[];
+      error?: string;
+    }>,
+    start: () => ipcRenderer.invoke("realtime-voice:start") as Promise<RealtimeVoiceState>,
+    stop: () => ipcRenderer.invoke("realtime-voice:stop") as Promise<RealtimeVoiceState>,
+    onState: (callback: (state: RealtimeVoiceState) => void) => {
+      const listener = (_event: IpcRendererEvent, state: RealtimeVoiceState) => callback(state);
+      ipcRenderer.on("realtime-voice:state", listener);
+      return () => ipcRenderer.removeListener("realtime-voice:state", listener);
+    },
   },
   updater: {
     onUpdateAvailable: (cb: (info: unknown) => void) => {

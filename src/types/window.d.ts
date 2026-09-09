@@ -6,11 +6,19 @@ import type { ModelInfo, McpServerConfig, McpServerStatus } from "./mcp";
 import type { PermissionUpdate } from "./permissions";
 import type { GitRepoInfo, GitStatus, GitBranch, GitLogEntry } from "@shared/types/git";
 import type { InstalledAgent } from "@shared/types/registry";
-import type { AppSettings, MacBackgroundEffect, ThemeOption } from "@shared/types/settings";
+import type {
+  AppSettings,
+  MacBackgroundEffect,
+  ThemeOption,
+  RealtimeVoiceStatus,
+} from "@shared/types/settings";
+import type { RemoteRendererRequest, RemoteRendererResponse, RemoteServerEvent } from "@shared/types/remote";
+import type { TelegramStatus } from "@shared/types/telegram";
 import type {
   ACPSessionEvent,
   ACPPermissionEvent,
   ACPTurnCompleteEvent,
+  ACPPromptErrorEvent,
   ACPConfigOption,
   ACPAuthenticateResult,
   ACPAvailableCommand,
@@ -292,7 +300,7 @@ declare global {
         prompt: (sessionId: string, text: string, images?: unknown[]) => Promise<IpcResult>;
         stop: (sessionId: string) => Promise<IpcResult>;
         reloadSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string) => Promise<IpcResult & { supportsLoad?: boolean }>;
-        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[] }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
+        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[]; sessionId?: string }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
         cancel: (sessionId: string) => Promise<IpcResult>;
         abortPendingStart: () => Promise<{ ok?: boolean }>;
         respondPermission: (sessionId: string, requestId: string, optionId: string) => Promise<IpcResult>;
@@ -302,6 +310,7 @@ declare global {
         onEvent: (callback: (data: ACPSessionEvent) => void) => () => void;
         onPermissionRequest: (callback: (data: ACPPermissionEvent) => void) => () => void;
         onTurnComplete: (callback: (data: ACPTurnCompleteEvent) => void) => () => void;
+        onPromptError: (callback: (data: ACPPromptErrorEvent) => void) => () => void;
         onExit: (callback: (data: { _sessionId: string; code: number | null; error?: string }) => void) => () => void;
       };
       codex: {
@@ -373,12 +382,36 @@ declare global {
         ) => Promise<Record<string, { path: string; args?: string[] } | null>>;
         /** Preferred ACP registry platform keys for the current machine. */
         getPlatformKeys: () => Promise<string[]>;
+        browseDirectory: (input: { binary: string; args?: string[]; directory: string }) => Promise<{
+          listing?: {
+            path: string;
+            parent: string | null;
+            entries: Array<{ name: string; path: string }>;
+          };
+          error?: string;
+        }>;
       };
       settings: {
         get: () => Promise<AppSettings>;
         set: (patch: Partial<AppSettings>) => Promise<IpcResult>;
         /** Subscribe to settings changes pushed from the main process. */
         onChanged: (callback: (settings: AppSettings) => void) => () => void;
+      };
+      telegram: {
+        getStatus: () => Promise<TelegramStatus>;
+        setToken: (token: string) => Promise<IpcResult>;
+        clearToken: () => Promise<IpcResult>;
+        setAllowedUsers: (userIds: string[]) => Promise<IpcResult>;
+        setInstructions: (instructions: string) => Promise<IpcResult>;
+        sendVoiceTranscription: (chatId: number, text: string) => Promise<IpcResult>;
+        readMedia: (mediaPath: string) => Promise<{ data: string; mimeType: string } | { error: string }>;
+        notify: (chatId: number, text: string) => Promise<IpcResult>;
+        onVoice: (callback: (data: { chatId: number; mediaPath: string; mimeType: string }) => void) => () => void;
+      };
+      remote: {
+        onRequest: (callback: (request: RemoteRendererRequest) => void) => () => void;
+        respond: (response: RemoteRendererResponse) => void;
+        emit: (event: RemoteServerEvent) => void;
       };
       jira: {
         getConfig: (projectId: string) => Promise<JiraProjectConfig | null>;
@@ -412,6 +445,37 @@ declare global {
         getPlatform: () => Promise<string>;
         /** Requests microphone permission (macOS system dialog). Returns { granted } on all platforms. */
         requestMicPermission: () => Promise<{ granted: boolean }>;
+      };
+      realtimeVoice: {
+        getState: () => Promise<{
+          status: RealtimeVoiceStatus;
+          error?: string;
+          pid?: number;
+        }>;
+        listDevices: () => Promise<{
+          devices?: Array<{
+            index: number;
+            name: string;
+            maxInputChannels: number;
+            maxOutputChannels: number;
+          }>;
+          error?: string;
+        }>;
+        start: () => Promise<{
+          status: RealtimeVoiceStatus;
+          error?: string;
+          pid?: number;
+        }>;
+        stop: () => Promise<{
+          status: RealtimeVoiceStatus;
+          error?: string;
+          pid?: number;
+        }>;
+        onState: (callback: (state: {
+          status: RealtimeVoiceStatus;
+          error?: string;
+          pid?: number;
+        }) => void) => () => void;
       };
       updater: {
         onUpdateAvailable: (cb: (info: { version: string; releaseNotes?: string }) => void) => () => void;

@@ -101,6 +101,8 @@ export interface SessionBase {
   engine?: EngineId;
   agentSessionId?: string;
   agentId?: string;
+  /** Agent-specific working directory, including remote SSH paths. */
+  workingDirectory?: string;
   codexThreadId?: string;
   /** Which folder this chat belongs to (undefined = root level). */
   folderId?: string;
@@ -108,6 +110,9 @@ export interface SessionBase {
   pinned?: boolean;
   /** Git branch at session creation time. */
   branch?: string;
+  /** Last known ACP config options for THIS session — lets dead sessions still
+   *  show their own model/permission settings (remote console, restarts). */
+  cachedConfigOptions?: import("@shared/types/acp").ACPConfigOption[];
 }
 
 export interface ChatSession extends SessionBase {

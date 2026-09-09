@@ -84,6 +84,7 @@ export function useAppSessionActions(input: UseAppSessionActionsInput) {
       agent?.id ?? "claude-code",
       agent?.cachedConfigOptions,
       wantedModel || undefined,
+      agent?.workingDirectory,
     );
   }, [getClaudeEffortForModel, input.manager, input.settings, input.setSelectedAgent]);
 
@@ -202,10 +203,14 @@ export function useAppSessionActions(input: UseAppSessionActionsInput) {
     const agentId = input.manager.activeSession?.agentId;
     if (!agentId || input.manager.activeSession?.engine !== "acp") return;
     if (!input.manager.acpConfigOptions?.length) return;
+    // Guard: only cache options that were actually loaded for the currently active
+    // session — otherwise stale options from a previously viewed session get written
+    // under this session's agent (cross-agent cache pollution).
+    if (input.manager.acpConfigSessionId !== input.manager.activeSessionId) return;
 
     window.claude.agents.updateCachedConfig(agentId, input.manager.acpConfigOptions)
       .then(() => input.refreshAgents());
-  }, [input.manager.acpConfigOptions, input.manager.activeSession, input.refreshAgents]);
+  }, [input.manager.acpConfigOptions, input.manager.acpConfigSessionId, input.manager.activeSession, input.manager.activeSessionId, input.refreshAgents]);
 
   return {
     getClaudeEffortForModel,

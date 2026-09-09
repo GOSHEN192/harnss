@@ -24,6 +24,8 @@ export interface SessionMeta {
   branch?: string;
   /** Agent ID — which agent was used for this session. */
   agentId?: string;
+  /** Agent-specific working directory, including remote SSH paths. */
+  workingDirectory?: string;
 }
 
 /**
@@ -57,6 +59,7 @@ export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt:
     totalCost: (data.totalCost as number) || 0,
     engine: data.engine as SessionMeta["engine"],
     codexThreadId: data.codexThreadId as string | undefined,
+    workingDirectory: data.workingDirectory as string | undefined,
     folderId: data.folderId as string | undefined,
     pinned: data.pinned as boolean | undefined,
     branch: data.branch as string | undefined,

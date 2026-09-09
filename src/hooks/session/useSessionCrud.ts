@@ -420,7 +420,7 @@ export function useSessionCrud({
 
   // ── Switch draft engine/agent ──
 
-  const setDraftAgent = useCallback((draftEngine: string, agentId: string, _cachedConfigOptions?: ACPConfigOption[], model?: string) => {
+  const setDraftAgent = useCallback((draftEngine: string, agentId: string, _cachedConfigOptions?: ACPConfigOption[], model?: string, workingDirectory?: string) => {
     const prevEngine = startOptionsRef.current.engine ?? "claude";
     const prevAgentId = startOptionsRef.current.agentId;
     if (prevEngine !== draftEngine) {
@@ -441,6 +441,7 @@ export function useSessionCrud({
       engine: draftEngine as StartOptions["engine"],
       agentId,
       model: normalizedModel || undefined,
+      workingDirectory: workingDirectory?.trim() || undefined,
     }));
     if (draftEngine === "codex") {
       prefetchCodexModels(normalizedModel || undefined);
@@ -452,6 +453,7 @@ export function useSessionCrud({
         engine: "acp",
         agentId,
         model: normalizedModel || undefined,
+        workingDirectory: workingDirectory?.trim() || undefined,
       });
       probeMcpServers(draftProjectIdRef.current);
     }

@@ -21,6 +21,16 @@ if (process.platform !== "win32") {
 }
 import { log } from "./lib/logger";
 import { reportError } from "./lib/error-utils";
+import { markRendererDown, markRendererUp } from "./lib/safe-send";
+
+// PostHog's exception autocapture logs "No chunk id map found" once per
+// captured exception when the bundler plugin never injected this map (it
+// only exists for bundled web builds). An error storm — e.g. the Telegram
+// bot hitting an unreachable api.telegram.org during a proxy outage — then
+// floods stdout one line per exception; both spontaneous renderer crashes
+// we investigated followed exactly such a flood. An empty map keeps
+// exception tracking working while silencing the per-exception noise.
+(globalThis as unknown as Record<string, unknown>)._posthogChunkIds = {};
 import { migrateFromOpenAcpUi } from "./lib/migration";
 import { glassEnabled, applyGlass, setGlassTint } from "./lib/glass";
 import { getAppSettings } from "./lib/app-settings";
@@ -47,7 +57,13 @@ import * as codexSessionsIpc from "./ipc/codex-sessions";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
+import * as telegramIpc from "./ipc/telegram";
+import * as realtimeVoiceIpc from "./ipc/realtime-voice";
 import { onSettingsChanged } from "./ipc/settings";
+import { RemoteControlBridge } from "./remote-control/bridge";
+import { RemoteControlServer } from "./remote-control/server";
+import { CoveRuntimeManager } from "./cove/runtime-manager";
+import { TelegramChannel } from "./telegram/channel";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
@@ -62,6 +78,12 @@ if (glassEnabled) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
+const remoteControlBridge = new RemoteControlBridge(getMainWindow);
+const remoteControlServer = new RemoteControlServer(remoteControlBridge);
+const coveRuntimeManager = new CoveRuntimeManager();
+const telegramChannel = new TelegramChannel(remoteControlBridge, getMainWindow);
+const realtimeVoiceManager = realtimeVoiceIpc.register(getMainWindow);
 
 import type { ThemeOption, MacBackgroundEffect as SharedMacBackgroundEffect } from "@shared/types/settings";
 
@@ -146,6 +168,9 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      // Keep live session event routing active while the desktop window is
+      // hidden for remote control.
+      backgroundThrottling: false,
       devTools: !glassEnabled,
       v8CacheOptions: "bypassHeatCheckAndEagerCompile", // cache compiled JS on first run — eliminates cold-start jank
     },
@@ -170,6 +195,11 @@ function createWindow(): void {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  mainWindow.on("close", (event) => {
+    if (isQuitting || !getAppSettings().remoteEnabled) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
   if (process.platform === "darwin") applyMacBackgroundEffect(initialMacBackgroundEffect);
 
   mainWindow.once("ready-to-show", () => {
@@ -191,7 +221,64 @@ function createWindow(): void {
 
   const isDev = !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL("http://localhost:5173");
+    // Keep this in sync with server.port in vite.config.ts (strictPort pins
+    // vite to it; the env var allows pointing at a server started elsewhere).
+    const devServerUrl =
+      process.env.VITE_DEV_SERVER_URL?.trim() || "http://localhost:5173";
+
+    // Self-heal: a gone renderer (e.g. a Chromium network-stack SIGTRAP) used
+    // to leave the window permanently blank until a manual restart. Recover
+    // automatically, with capped retries so a crash loop cannot spin forever.
+    let recoveryAttempts = 0;
+    const recoveryLimit = 5;
+    const reloadRenderer = (delayMs: number, why: string, attempt: number) => {
+      setTimeout(() => {
+        if (mainWindow?.isDestroyed()) return;
+        console.warn(
+          `[recovery] ${why}; reloading ${devServerUrl} (attempt ${attempt}/${recoveryLimit})`,
+        );
+        void mainWindow?.webContents.loadURL(devServerUrl).catch((error) => {
+          console.error("[recovery] reload failed:", error);
+        });
+      }, delayMs);
+    };
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+      if (details.reason === "clean-exit") return;
+      markRendererDown();
+      recoveryAttempts += 1;
+      if (recoveryAttempts > recoveryLimit) {
+        console.error(
+          `[recovery] renderer keeps crashing (${details.reason}); giving up`,
+        );
+        return;
+      }
+      reloadRenderer(
+        Math.min(1000 * 2 ** (recoveryAttempts - 1), 15_000),
+        `renderer gone (${details.reason})`,
+        recoveryAttempts,
+      );
+    });
+    mainWindow.webContents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, _url, isMainFrame) => {
+        // -3 / ERR_ABORTED is a deliberate navigation, not a failure.
+        if (!isMainFrame || errorCode === -3) return;
+        recoveryAttempts += 1;
+        if (recoveryAttempts > recoveryLimit) return;
+        reloadRenderer(
+          1_000,
+          `load failed (${errorCode} ${errorDescription})`,
+          recoveryAttempts,
+        );
+      },
+    );
+    // Once the renderer is up again, replay the agent events buffered while
+    // it was down so a crash never truncates a live session's transcript.
+    mainWindow.webContents.on("did-finish-load", () => {
+      markRendererUp(getMainWindow);
+    });
+
+    mainWindow.loadURL(devServerUrl);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
   }
@@ -338,9 +425,13 @@ codexSessionsIpc.register(getMainWindow);
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
 jiraIpc.register();
+telegramIpc.register(telegramChannel);
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
+let lastTelegramEnabled = getAppSettings().telegramEnabled;
+let lastRealtimeVoiceConfig = JSON.stringify(getAppSettings().realtimeVoice);
+let lastRemoteEnabled = getAppSettings().remoteEnabled;
 onSettingsChanged((settings) => {
   if (lastAnalyticsEnabled !== undefined && settings.analyticsEnabled !== lastAnalyticsEnabled) {
     lastAnalyticsEnabled = settings.analyticsEnabled;
@@ -349,6 +440,34 @@ onSettingsChanged((settings) => {
     });
   } else {
     lastAnalyticsEnabled = settings.analyticsEnabled;
+  }
+  void remoteControlServer.reconfigure().catch((err) => {
+    reportError("REMOTE", err, { context: "reconfigure" });
+  });
+  if (settings.remoteEnabled !== lastRemoteEnabled) {
+    lastRemoteEnabled = settings.remoteEnabled;
+    if (settings.remoteEnabled) {
+      void coveRuntimeManager.start().catch((err) => {
+        reportError("COVE", err, { context: "remote-enabled" });
+      });
+    } else {
+      void coveRuntimeManager.stop().catch((err) => {
+        reportError("COVE", err, { context: "remote-disabled" });
+      });
+    }
+  }
+  if (settings.telegramEnabled !== lastTelegramEnabled) {
+    lastTelegramEnabled = settings.telegramEnabled;
+    void telegramChannel.reconfigure().catch((err) => {
+      reportError("TELEGRAM", err, { context: "reconfigure" });
+    });
+  }
+  const realtimeVoiceConfig = JSON.stringify(settings.realtimeVoice);
+  if (realtimeVoiceConfig !== lastRealtimeVoiceConfig) {
+    lastRealtimeVoiceConfig = realtimeVoiceConfig;
+    void realtimeVoiceManager.reconfigure().catch((err) => {
+      reportError("REALTIME_VOICE", err, { context: "reconfigure" });
+    });
   }
 });
 
@@ -459,6 +578,22 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  if (getAppSettings().realtimeVoice.enabled) {
+    void realtimeVoiceManager.ensureGateway().catch((err) => {
+      reportError("REALTIME_VOICE", err, { context: "gateway-startup" });
+    });
+  }
+  void remoteControlServer.start().catch((err) => {
+    reportError("REMOTE", err, { context: "startup" });
+  });
+  if (getAppSettings().remoteEnabled) {
+    void coveRuntimeManager.start().catch((err) => {
+      reportError("COVE", err, { context: "startup" });
+    });
+  }
+  void telegramChannel.start().catch((err) => {
+    reportError("TELEGRAM", err, { context: "startup" });
+  });
   initAutoUpdater(getMainWindow);
   initPreReleaseCheck(getMainWindow);
 
@@ -503,11 +638,19 @@ app.whenReady().then(() => {
 });
 
 app.on("will-quit", (event) => {
+  isQuitting = true;
   globalShortcut.unregisterAll();
 
   // When an update is being installed, let the updater control the quit lifecycle.
   // In that case, fire-and-forget PostHog shutdown and do not delay quit.
   if (getIsInstallingUpdate()) {
+    void Promise.all([
+      remoteControlServer.stop(),
+      telegramChannel.stop(),
+      realtimeVoiceManager.dispose(),
+      coveRuntimeManager.stop(),
+    ]);
+    remoteControlBridge.dispose();
     void shutdownPostHog();
     return;
   }
@@ -521,11 +664,27 @@ app.on("will-quit", (event) => {
       reportError("POSTHOG", err, { context: "shutdown" });
     })
     .finally(() => {
-      app.exit(0);
+      void Promise.all([
+        remoteControlServer.stop(),
+        telegramChannel.stop(),
+        realtimeVoiceManager.dispose(),
+        coveRuntimeManager.stop(),
+      ])
+        .finally(() => {
+          remoteControlBridge.dispose();
+          app.exit(0);
+        });
     });
 });
 
 app.on("window-all-closed", () => {
+  // The desktop voice bridge owns the microphone and a runtime session slot.
+  // Stop it when the last Harnss window closes, otherwise macOS keeps the
+  // Electron process alive and the bridge can survive the visible app.
+  void realtimeVoiceManager.stop().catch((err) => {
+    reportError("REALTIME_VOICE", err, { context: "window-all-closed" });
+  });
+
   claudeSessionsIpc.stopAll();
   acpSessionsIpc.stopAll();
   codexSessionsIpc.stopAll();
@@ -541,4 +700,13 @@ app.on("window-all-closed", () => {
   if (!getIsInstallingUpdate()) {
     app.quit();
   }
+});
+
+app.on("activate", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  createWindow();
 });

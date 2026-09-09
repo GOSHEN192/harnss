@@ -1,6 +1,8 @@
 import { memo, useState, useCallback } from "react";
 import {
   Bot,
+  ChevronRight,
+  Folder,
   Plus,
   Pencil,
   Trash2,
@@ -47,6 +49,7 @@ interface FormState {
   name: string;
   binary: string;
   args: string;
+  workingDirectory: string;
   envPairs: Array<{ key: string; value: string }>;
   icon: string;
   iconType: "emoji" | "lucide";
@@ -62,7 +65,7 @@ interface FormErrors {
 // ── Helpers ──
 
 function emptyForm(): FormState {
-  return { id: "", name: "", binary: "", args: "", envPairs: [], icon: "", iconType: "lucide" };
+  return { id: "", name: "", binary: "", args: "", workingDirectory: "", envPairs: [], icon: "", iconType: "lucide" };
 }
 
 /** Try to parse a JSON agent definition (single object or first element of array). */
@@ -76,6 +79,7 @@ function tryParseAgentJson(text: string): FormState | null {
       name: String(obj.name ?? ""),
       binary: String(obj.binary ?? ""),
       args: Array.isArray(obj.args) ? obj.args.join(" ") : "",
+      workingDirectory: String(obj.workingDirectory ?? ""),
       envPairs: obj.env && typeof obj.env === "object"
         ? Object.entries(obj.env as Record<string, string>).map(([key, value]) => ({ key, value: String(value) }))
         : [],
@@ -95,6 +99,7 @@ function agentToForm(agent: InstalledAgent): FormState {
     name: agent.name,
     binary: agent.binary ?? "",
     args: agent.args?.join(" ") ?? "",
+    workingDirectory: agent.workingDirectory ?? "",
     envPairs: agent.env
       ? Object.entries(agent.env).map(([key, value]) => ({ key, value }))
       : [],
@@ -201,12 +206,51 @@ function AgentForm({
   const [form, setForm] = useState<FormState>(initial);
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryPath, setDirectoryPath] = useState("");
+  const [directoryListing, setDirectoryListing] = useState<{
+    path: string;
+    parent: string | null;
+    entries: Array<{ name: string; path: string }>;
+  } | null>(null);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
 
   const updateField = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     // Clear field error on change
     setErrors((prev) => ({ ...prev, [key]: undefined, general: undefined }));
   }, []);
+
+  const loadRemoteDirectory = useCallback(async (directory: string) => {
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    try {
+      const result = await window.claude.agents.browseDirectory({
+        binary: form.binary.trim(),
+        args: form.args.trim() ? form.args.trim().split(/\s+/) : undefined,
+        directory: directory.trim() || "/root",
+      });
+      if (result.listing) {
+        setDirectoryListing(result.listing);
+        setDirectoryPath(result.listing.path);
+      } else {
+        setDirectoryError(result.error ?? "Could not read the remote directory.");
+      }
+    } catch (error) {
+      setDirectoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }, [form.args, form.binary]);
+
+  const openRemoteDirectoryPicker = useCallback(() => {
+    const initialPath = form.workingDirectory.trim() || "/root";
+    setDirectoryPickerOpen(true);
+    setDirectoryListing(null);
+    setDirectoryPath(initialPath);
+    void loadRemoteDirectory(initialPath);
+  }, [form.workingDirectory, loadRemoteDirectory]);
 
   const validate = useCallback((): FormErrors => {
     const e: FormErrors = {};
@@ -241,6 +285,7 @@ function AgentForm({
         engine: "acp",
         binary: form.binary.trim(),
         args: form.args.trim() ? form.args.trim().split(/\s+/) : undefined,
+        workingDirectory: form.workingDirectory.trim() || undefined,
         env:
           form.envPairs.length > 0
             ? Object.fromEntries(
@@ -402,6 +447,36 @@ function AgentForm({
             </p>
           </div>
 
+          {/* Working directory */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Working Directory
+            </label>
+            <div className="flex gap-2">
+              <Input
+                value={form.workingDirectory}
+                onChange={(e) => updateField("workingDirectory", e.target.value)}
+                placeholder="/root/project"
+                className="font-mono"
+              />
+              {form.binary.trim().endsWith("/ssh") || form.binary.trim() === "ssh" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openRemoteDirectoryPicker}
+                  className="shrink-0 gap-1.5"
+                >
+                  <Folder className="h-3.5 w-3.5" />
+                  Browse
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-[11px] text-muted-foreground/60">
+              Optional Agent working directory. Use the remote path for SSH Agents.
+            </p>
+          </div>
+
           {/* Environment variables */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -471,6 +546,77 @@ function AgentForm({
           {saving ? "Saving..." : isEditing ? "Save Changes" : "Add Agent"}
         </Button>
       </div>
+
+      <Dialog open={directoryPickerOpen} onOpenChange={setDirectoryPickerOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Choose Remote Directory</DialogTitle>
+            <DialogDescription>
+              Browse directories on the SSH server used by this Agent.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">{directoryPath || "/"}</span>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                if (directoryListing) {
+                  updateField("workingDirectory", directoryListing.path);
+                  setDirectoryPickerOpen(false);
+                }
+              }}
+              disabled={!directoryListing || directoryLoading}
+            >
+              Select This Folder
+            </Button>
+          </div>
+
+          {directoryError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {directoryError}
+            </div>
+          )}
+
+          <div className="max-h-80 min-h-32 overflow-y-auto rounded-md border p-1">
+            {directoryLoading ? (
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                Loading remote directories...
+              </div>
+            ) : directoryListing?.entries.length ? (
+              <>
+                {directoryListing.parent && (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+                    onClick={() => void loadRemoteDirectory(directoryListing.parent!)}
+                  >
+                    <ChevronRight className="h-3.5 w-3.5 rotate-180 text-muted-foreground" />
+                    <span>..</span>
+                  </button>
+                )}
+                {directoryListing.entries.map((entry) => (
+                  <button
+                    type="button"
+                    key={entry.path}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+                    onClick={() => void loadRemoteDirectory(entry.path)}
+                  >
+                    <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
+                  </button>
+                ))}
+              </>
+            ) : (
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                No subdirectories found.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

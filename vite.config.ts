@@ -28,5 +28,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Never drift to another port silently. If :5173 is still taken after the
+    // clean-dev-env guard ran, failing loudly beats Electron loading a stale
+    // server on 5173 (the old "white screen" failure mode).
+    strictPort: true,
   },
 });

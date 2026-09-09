@@ -4,6 +4,9 @@ import { PanelLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
+import { useRemoteControlBridge } from "@/hooks/useRemoteControlBridge";
+import { useTelegramVoiceBridge } from "@/hooks/useTelegramVoiceBridge";
+import { useRealtimeVoice } from "@/hooks/useRealtimeVoice";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { useGlassTheme } from "@/hooks/useGlassTheme";
 import { ThemeProvider } from "@/hooks/useTheme";
@@ -83,6 +86,12 @@ import { AgentProvider, type AgentContextValue } from "./AgentContext";
 
 export function AppLayout() {
   const o = useAppOrchestrator();
+  const realtimeVoice = useRealtimeVoice();
+  useTelegramVoiceBridge();
+  useRemoteControlBridge(o.managers.manager, o.managers.projectManager.projects, {
+    acpPermissionBehavior: o.managers.settings.acpPermissionBehavior,
+    setAcpPermissionBehavior: o.managers.settings.setAcpPermissionBehavior,
+  });
   const { managers, agentState, state, ui, actions } = o;
   const {
     sidebar, projectManager, spaceManager, manager, settings, resolvedTheme, spaceTerminals, activeSpaceTerminals, splitView,
@@ -1482,6 +1491,7 @@ export function AppLayout() {
                   showDevFill={devFillEnabled}
                   onSeedDevExampleConversation={manager.seedDevExampleConversation}
                   onSeedDevExampleSpaceData={handleSeedDevExampleSpaceData}
+                  realtimeVoice={realtimeVoice}
                 />
               </div>
               {chatSearchOpen && (
@@ -1557,6 +1567,7 @@ export function AppLayout() {
                   onSelectWorktree={handleAgentWorktreeChange}
                   isEmptySession={manager.messages.length === 0}
                   onManageACPs={() => setShowSettings("agents")}
+                  realtimeVoice={realtimeVoice}
                 />
               </div>
               </>

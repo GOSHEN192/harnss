@@ -153,6 +153,7 @@ src/
 ```bash
 pnpm install
 pnpm dev       # Starts Vite dev server + tsup watch + Electron
+pnpm restart:dev [pids…]  # Agent-safe restart: re-execs detached into a new session FIRST, then kills old pids (if given) and boots a fresh pnpm dev
 pnpm build     # tsup (electron/) + Vite (renderer) production build
 pnpm start     # Run Electron with pre-built dist/
 pnpm test      # Run vitest unit tests (uses vitest.config.electron.ts)
@@ -160,6 +161,36 @@ pnpm test:watch    # Run vitest in watch mode
 ```
 
 **Dev logs**: Main process logs go to `logs/main-{timestamp}.log` (dev) or `{userData}/logs/main-{timestamp}.log` (packaged). Check the latest file with `ls -t logs/main-*.log | head -1 | xargs cat`.
+
+## Operational Notes: Restarting the Dev Instance & Telegram
+
+Rules learned the hard way on 2026-08-29, when an agent running inside the app tried to restart it with `kill -TERM <pids>; nohup pnpm dev &`: the kill hit the app's own process tree, the shell died before `pnpm dev` could spawn, and the app (plus its Telegram bot) stayed down until manually restarted.
+
+**Restarting the dev instance**
+
+- Always use `pnpm restart:dev [oldPids…]` (`scripts/restart-dev.sh`). Never inline `kill <pids>…; pnpm dev &` from an agent/tool session running inside the app — it can kill its own host before the restart runs.
+- The script re-execs itself into a fresh session (`python3 os.setsid()`, stdio redirected to the log) BEFORE killing old PIDs, then boots `pnpm dev` detached. Killing the old app can never kill the restart.
+- Vite/tsup/restart output lands in `$HARNSS_RESTART_LOG` (default `/tmp/harnss-dev-restart.log`).
+
+**Telegram channel**
+
+- Telegram runs inside the Electron main process (grammY, `electron/src/telegram/channel.ts`). Bot silence from Telegram usually just means the app is dead — check the app first.
+- Never launch the app from an SSH/headless session: Keychain access is denied (`errSecInteractionNotAllowed`), `safeStorage` decryption of the encrypted channel state fails, and the bot silently never starts. Log signature: `[TELEGRAM_LOAD] Unexpected token 'v', "v10&…` — the `v10…` blob is the encrypted file being re-parsed as plaintext, i.e. decryption failed, not corruption. Fix by launching in the GUI login session, not by re-entering the token.
+- GUI-session launch options: Terminal/iTerm, `pnpm restart:dev`, or `open -n node_modules/.pnpm/electron@*/node_modules/electron/dist/Electron.app --args <project-dir>`.
+- Healthy start in `logs/main-*.log`: `[COVE] COVE voice WebSocket listening on 127.0.0.1:8876` plus a dispatched `<telegram-channel-instructions>` ACP send; failure marker: `[telegram] polling stopped`.
+
+**Agent sessions must never restart or kill the host app**
+
+- On 2026-08-29 the Telegram-bound ACP session (a Factory Droid agent) killed its own host twice while "fixing" a 502 — once with SIGTERM, once with `kill -KILL` listing its own PID. Each outage took down the app, Telegram, and harnss.logoshen.com until manually relaunched. The relaunch half of `kill …; pnpm dev &` never runs because the shell dies with the app.
+- Rule for any session running inside Harnss: do NOT `kill` Harnss/electron PIDs and do NOT relaunch the app from inside it. `error code: 502` on harnss.logoshen.com means the app is down while the cloudflared tunnel is fine: check `lsof -nP -iTCP:8787 -sTCP:LISTEN`, report to the user, and stop there. Relaunch belongs to a GUI-session terminal or `pnpm restart:dev`.
+- The app has NO single-instance lock yet: a second `electron .` starts "successfully" but its remote server (8787) and COVE runtime (8876) die with EADDRINUSE — a degraded ghost instance. Candidate fix: `app.requestSingleInstanceLock()` in `electron/src/main.ts`.
+
+**COVE web voice (reference)**
+
+- Chain: `https://harnss.logoshen.com/cove/` (static page served by the remote server) → WS `/voice` → proxied to `ws://127.0.0.1:8876` (COVE python runtime, started by `CoveRuntimeManager` when Remote Control is enabled).
+- `/voice` auth uses the WebSocket subprotocol `harnss-voice, <remoteToken>` (no query token on this path; HTTP APIs take `Authorization: Bearer`). On connect the runtime opens a call session by itself: `voice_state greeting` → `tts_chunk`s → `voice_state listening`.
+- The COVE python survives app death as an orphan and keeps serving 8876; a relaunched app's runtime then fails with `[COVE_ERR] … [Errno 48] address already in use`. Voice keeps working through the orphan but is unmanaged; kill the orphan PID and restart the app to hand control back.
+- `settings.json` stores the real `remoteToken` in plaintext; some tool outputs mask it to `***` on display. Verify character-by-character before treating it as a corrupted or masked stored value.
 
 ## Architecture
 

@@ -9,6 +9,7 @@ import type {
   ACPSessionEvent,
   ACPPermissionEvent,
   ACPTurnCompleteEvent,
+  ACPPromptErrorEvent,
   ACPConfigOption,
   ACPAvailableCommandsUpdate,
   ACPAuthMethod,
@@ -55,6 +56,11 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
   } = base;
 
   const [configOptions, setConfigOptions] = useState<ACPConfigOption[]>(initialConfigOptions ?? []);
+  // Tracks which session the current configOptions belong to, so stale options from a
+  // previously viewed session are never attributed to the newly active agent.
+  const [configOptionsSessionId, setConfigOptionsSessionId] = useState<string | null>(
+    initialConfigOptions?.length ? sessionId ?? null : null,
+  );
   const [configOptionsLoading, setConfigOptionsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(initialSlashCommands ?? []);
   const [authRequired, setAuthRequired] = useState(false);
@@ -339,6 +345,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       const cou = update as { sessionUpdate: "config_option_update"; configOptions: ACPConfigOption[] };
       acpLog("CONFIG_UPDATE", { optionCount: cou.configOptions?.length });
       setConfigOptions(cou.configOptions);
+      setConfigOptionsSessionId(sessionIdRef.current ?? null);
       setConfigOptionsLoading(false);
     } else if (kind === "usage_update") {
       const uu = update as Extract<typeof update, { sessionUpdate: "usage_update" }>;
@@ -381,16 +388,22 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     acpLog("SESSION_CONNECTED", { sessionId: sessionId.slice(0, 8) });
     setIsConnected(true);
     setConfigOptionsLoading((initialConfigOptions?.length ?? 0) === 0);
+    // Reset stale options from a previously viewed session before loading this session's own.
+    setConfigOptions(initialConfigOptions ?? []);
+    setConfigOptionsSessionId(initialConfigOptions?.length ? sessionId : null);
 
     // Fetch any config options buffered in main process during the DRAFT→active transition
     // (events may have arrived before this listener was subscribed)
     window.claude.acp.getConfigOptions(sessionId).then(result => {
+      if (sessionIdRef.current !== sessionId) return;
       if (result?.configOptions?.length) {
         acpLog("CONFIG_FETCHED", { count: result.configOptions.length });
         setConfigOptions(result.configOptions as ACPConfigOption[]);
+        setConfigOptionsSessionId(sessionId);
       }
       setConfigOptionsLoading(false);
     }).catch(() => {
+      if (sessionIdRef.current !== sessionId) return;
       setConfigOptionsLoading(false);
       /* session may have been stopped */
     });
@@ -480,6 +493,16 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       setIsProcessing(false);
     });
 
+    const unsubPromptError = window.claude.acp.onPromptError((data: ACPPromptErrorEvent) => {
+      if (data._sessionId !== sessionIdRef.current) return;
+      const message = data.error || "ACP prompt failed";
+      acpLog("SEND_ERROR", { session: data._sessionId.slice(0, 8), error: message });
+      finalizeStreamingMessage();
+      closePendingTools();
+      pushSystemError(`ACP prompt error: ${message}`);
+      setIsProcessing(false);
+    });
+
     const unsubExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null; error?: string }) => {
       if (data._sessionId !== sessionIdRef.current) return;
       acpLog("SESSION_EXIT", { code: data.code, error: data.error });
@@ -496,7 +519,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     });
 
     return () => {
-      unsubEvent(); unsubPermission(); unsubTurnComplete(); unsubExit();
+      unsubEvent(); unsubPermission(); unsubTurnComplete(); unsubPromptError(); unsubExit();
       cancelPendingFlush();
     };
   }, [closePendingTools, finalizeStreamingMessage, handleSessionUpdate, initialConfigOptions, sessionId]);
@@ -611,13 +634,15 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
   }, [sessionId, pendingPermission]);
 
   const setConfig = useCallback(async (configId: string, value: string) => {
-    if (!sessionId) return;
+    if (!sessionId) return { error: "ACP session not found." };
     acpLog("CONFIG_SET", { session: sessionId.slice(0, 8), configId, value });
     const result = await window.claude.acp.setConfig(sessionId, configId, value);
     if (result.configOptions) {
       setConfigOptions(result.configOptions);
+      setConfigOptionsSessionId(sessionId);
     }
     setConfigOptionsLoading(false);
+    return result;
   }, [sessionId]);
 
   const compact = useCallback(async () => { /* no-op for ACP */ }, []);
@@ -627,6 +652,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     const result = await window.claude.acp.authenticate(sessionId, methodId);
     if (result.configOptions) {
       setConfigOptions(result.configOptions);
+      setConfigOptionsSessionId(sessionId);
     }
     setConfigOptionsLoading(false);
     if (result.authMethods) {
@@ -655,7 +681,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     send, sendRaw, stop, interrupt, compact,
     pendingPermission, respondPermission,
     setPermissionMode,
-    configOptions, setConfigOptions, setConfig, configOptionsLoading,
+    configOptions, setConfigOptions, setConfig, configOptionsLoading, configOptionsSessionId,
     slashCommands,
     authRequired,
     authMethods,

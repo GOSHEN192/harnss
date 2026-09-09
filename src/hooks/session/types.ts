@@ -14,6 +14,8 @@ export interface StartOptions {
   effort?: ClaudeEffort;
   engine?: EngineId;
   agentId?: string;
+  /** Agent-specific working directory, including remote SSH paths. */
+  workingDirectory?: string;
   /** Cached config options from previous sessions */
   cachedConfigOptions?: ACPConfigOption[];
 }

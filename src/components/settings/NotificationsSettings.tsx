@@ -8,6 +8,7 @@ import type {
   NotificationSettings,
   AppSettings,
 } from "@/types";
+import { useTranslation } from "@/lib/i18n";
 
 // ── Props ──
 
@@ -60,6 +61,7 @@ export const NotificationsSettings = memo(function NotificationsSettings({
   appSettings,
   onUpdateAppSettings,
 }: NotificationsSettingsProps) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<NotificationSettings>({
     exitPlanMode: { osNotification: "unfocused", sound: "always" },
     permissions: { osNotification: "unfocused", sound: "unfocused" },
@@ -102,7 +104,7 @@ export const NotificationsSettings = memo(function NotificationsSettings({
           {EVENT_GROUPS.map((event, i) => (
             <SettingsSection key={event.key} icon={Bell} label={event.label} first={i === 0}>
               <p className="mb-2 text-xs text-muted-foreground">
-                {event.description}
+                {t(event.description)}
               </p>
 
               {/* Two setting rows per event: OS notification + sound */}

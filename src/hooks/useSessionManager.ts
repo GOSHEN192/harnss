@@ -1,10 +1,22 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { ChatSession, UIMessage, PermissionRequest, McpServerStatus, McpServerConfig, ModelInfo, AcpPermissionBehavior, EngineId, Project, ACPAuthenticateResult, ACPConfigOption, ACPPermissionEvent } from "@/types";
+import type { ChatSession, UIMessage, PermissionRequest, McpServerStatus, McpServerConfig, ModelInfo, AcpPermissionBehavior, EngineId, Project, ACPAuthenticateResult, ACPConfigOption, ACPPermissionEvent, AppPermissionBehavior, InstalledAgent, ImageAttachment } from "@/types";
+import type {
+  RemoteMessage,
+  RemoteModelOption,
+  RemotePermission,
+  RemoteSessionSnapshot,
+  RemoteSessionSummary,
+} from "@shared/types/remote";
 import { toMcpStatusState } from "../lib/mcp-utils";
+import { getSessionEngineIcon } from "../lib/engine-icons";
 import { toChatSession } from "../lib/session/records";
 import { BackgroundSessionStore } from "../lib/background/session-store";
-import { createSystemMessage } from "../lib/message-factory";
+import { createSystemMessage, createUserMessage } from "../lib/message-factory";
+import { buildSdkContent } from "../lib/engine/protocol";
+import { imageAttachmentsToCodexInputs } from "../lib/engine/codex-adapter";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
+import { getAskUserQuestionKey } from "../lib/ask-user-question";
+import { formatCompactSummary } from "../components/lib/tool-formatting";
 import {
   DRAFT_ID,
   type StartOptions,
@@ -16,6 +28,7 @@ import {
   type SharedSessionRefs,
   type SharedSessionSetters,
   type EngineHooks,
+  buildCodexCollabMode,
 } from "./session/types";
 import { useSessionPane } from "./session/useSessionPane";
 import { useMessageQueue } from "./session/useMessageQueue";
@@ -23,6 +36,113 @@ import { useSessionPersistence } from "./session/useSessionPersistence";
 import { useDraftMaterialization } from "./session/useDraftMaterialization";
 import { useSessionRevival } from "./session/useSessionRevival";
 import { useSessionLifecycle } from "./session/useSessionLifecycle";
+
+const REMOTE_MESSAGE_LIMIT = 200;
+
+function toRemoteMessages(messages: UIMessage[], isProcessing = false): { messages: RemoteMessage[]; truncated: boolean } {
+  const tail: UIMessage[] = [];
+  for (let index = messages.length - 1; index >= 0 && tail.length <= REMOTE_MESSAGE_LIMIT; index -= 1) {
+    const message = messages[index];
+    if (!message.isQueued) tail.push(message);
+  }
+  const truncated = tail.length > REMOTE_MESSAGE_LIMIT;
+  const visible = tail.slice(0, REMOTE_MESSAGE_LIMIT).reverse();
+  return {
+    messages: visible.map((message) => {
+      const toolSummary = message.role === "tool_call" || message.role === "tool_result"
+        ? formatCompactSummary(message)
+        : "";
+      return {
+        id: message.id,
+        role: message.role,
+        content: message.role === "user" ? (message.displayContent ?? message.content) : message.content,
+        ...(message.displayContent ? { displayContent: message.displayContent } : {}),
+        ...(toolSummary ? { toolSummary } : {}),
+        ...(message.toolName ? { toolName: message.toolName } : {}),
+        ...(message.thinking ? { thinking: message.thinking } : {}),
+        ...(message.subagentStatus ? { subagentStatus: message.subagentStatus } : {}),
+        ...(message.subagentSteps?.length ? {
+          subagentSteps: message.subagentSteps.slice(-30).map((step) => ({
+            toolName: step.toolName,
+            status: step.toolError ? "error" as const : step.toolResult ? "completed" as const : "running" as const,
+          })),
+        } : {}),
+        ...(isProcessing && message.isStreaming ? { isStreaming: true } : {}),
+        timestamp: message.timestamp,
+        ...(message.isError !== undefined ? { isError: message.isError } : {}),
+        ...(message.toolError !== undefined ? { toolError: message.toolError } : {}),
+      };
+    }),
+    truncated,
+  };
+}
+
+function toRemotePermission(permission: PermissionRequest | null): RemotePermission | null {
+  if (!permission) return null;
+  const input = permission.toolInput;
+  const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
+  const questions = rawQuestions.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object") return [];
+    const question = raw as Record<string, unknown>;
+    if (typeof question.question !== "string") return [];
+    const questionId = getAskUserQuestionKey({
+      id: typeof question.id === "string" ? question.id : undefined,
+      question: question.question,
+    }, index);
+    const rawOptions = Array.isArray(question.options) ? question.options : [];
+    const options = rawOptions.flatMap((option) => {
+      if (!option || typeof option !== "object") return [];
+      const item = option as Record<string, unknown>;
+      if (typeof item.label !== "string") return [];
+      return [{
+        label: item.label,
+        ...(typeof item.description === "string" ? { description: item.description } : {}),
+      }];
+    });
+    return [{
+      id: questionId,
+      question: question.question,
+      ...(typeof question.header === "string" ? { header: question.header } : {}),
+      ...(options.length > 0 ? { options } : {}),
+      ...(question.multiSelect === true ? { multiSelect: true } : {}),
+    }];
+  });
+
+  return {
+    requestId: permission.requestId,
+    toolName: permission.toolName,
+    toolUseId: permission.toolUseId,
+    ...(permission.decisionReason ? { decisionReason: permission.decisionReason } : {}),
+    ...(permission.decisionReason ? { summary: permission.decisionReason } : {}),
+    kind: permission.toolName === "AskUserQuestion" ? "user-input" : "approval",
+    ...(questions.length > 0 ? { questions } : {}),
+  };
+}
+
+function toRemoteModelOptions(
+  models: Array<ModelInfo | CodexModelSummary>,
+): RemoteModelOption[] {
+  return models.map((model) => {
+    if ("supportedReasoningEfforts" in model) {
+      return {
+        value: model.id,
+        displayName: model.displayName,
+        ...(model.description ? { description: model.description } : {}),
+        ...(model.supportedReasoningEfforts.length > 0
+          ? { supportsEffort: true, supportedEffortLevels: model.supportedReasoningEfforts.map((entry) => entry.reasoningEffort) }
+          : {}),
+        ...(model.isDefault ? { isDefault: true } : {}),
+      };
+    }
+    return {
+      value: model.value,
+      displayName: model.displayName,
+      ...(model.description ? { description: model.description } : {}),
+      ...(model.supportsEffort !== undefined ? { supportsEffort: model.supportsEffort } : {}),
+      ...(model.supportedEffortLevels ? { supportedEffortLevels: model.supportedEffortLevels } : {}),
+    };
+  });
+}
 
 export function useSessionManager(
   projects: Project[],
@@ -56,6 +176,21 @@ export function useSessionManager(
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const backgroundStoreRef = useRef(new BackgroundSessionStore());
+  const installedAgentsRef = useRef<InstalledAgent[] | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.claude.agents.list()
+      .then((agents) => { if (!cancelled) installedAgentsRef.current = agents; })
+      .catch(() => { /* agent registry is optional */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const resolveEngineIcon = useCallback(
+    (engine: string | undefined, agentId: string | undefined): string | undefined =>
+      getSessionEngineIcon(engine as EngineId | undefined, agentId, installedAgentsRef.current),
+    [],
+  );
 
   useEffect(() => {
     if (visibleSplitSessionIds.length === 0) return;
@@ -159,6 +294,14 @@ export function useSessionManager(
   const acpAgentSessionIdRef = useRef<string | null>(null);
   const codexRawModelsRef = useRef(codexRawModels);
   codexRawModelsRef.current = codexRawModels;
+  const cachedModelsRef = useRef(cachedModels);
+  cachedModelsRef.current = cachedModels;
+  const remoteSupportedModelsRef = useRef<ModelInfo[]>([]);
+  remoteSupportedModelsRef.current = isCodex
+    ? []
+    : isACP
+      ? []
+      : claude.supportedModels.length > 0 ? claude.supportedModels : cachedModels;
   const codexEffortRef = useRef(codex.codexEffort);
   codexEffortRef.current = codex.codexEffort;
   // Tracks whether current Codex effort was explicitly chosen by the user.
@@ -301,7 +444,7 @@ export function useSessionManager(
       applyCodexModelDefaultEffort,
     });
 
-  const { reviveSession, reviveAcpSession, reviveCodexSession } = useSessionRevival({
+  const { reviveSession, reviveAcpSession, reviveAcpSessionById, reviveCodexSession } = useSessionRevival({
     refs,
     setters,
     engines,
@@ -327,6 +470,8 @@ export function useSessionManager(
     setActiveClaudeEffort,
     setActiveClaudeModelAndEffort,
     setSessionClaudeModelAndEffort,
+    setSessionEffort,
+    updateSessionSettings,
     restartAcpSession,
     restartActiveSessionInCurrentWorktree,
     fullRevertSession,
@@ -519,7 +664,7 @@ export function useSessionManager(
           isCompacting: backgroundState.isCompacting,
         },
         initialPermission: backgroundState.pendingPermission,
-        initialConfigOptions: [],
+        initialConfigOptions: backgroundState.configOptions ?? [],
         initialSlashCommands: backgroundState.slashCommands ?? [],
         initialRawAcpPermission: backgroundState.rawAcpPermission,
       };
@@ -547,6 +692,370 @@ export function useSessionManager(
     };
   }, []);
 
+  const getRemoteSnapshot = useCallback(async (sessionId: string): Promise<RemoteSessionSnapshot | null> => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) return null;
+
+    const project = projectsRef.current.find((entry) => entry.id === session.projectId);
+    const engineId = session.engine ?? "claude";
+    const active = activeSessionIdRef.current === sessionId;
+    const background = active ? undefined : backgroundStoreRef.current.get(sessionId);
+    // Only trust pane-level options when they were loaded for this exact session,
+    // otherwise a stale set from a previously viewed session (different agent) leaks in.
+    let acpConfigOptions = active && acp.configOptionsSessionId === sessionId
+      ? acp.configOptions
+      : (active ? [] : (background?.configOptions ?? []));
+    if (engineId === "acp" && installedAgentsRef.current === undefined) {
+      try {
+        installedAgentsRef.current = await window.claude.agents.list();
+      } catch {
+        installedAgentsRef.current = [];
+      }
+    }
+    if (engineId === "acp" && acpConfigOptions.length === 0) {
+      try {
+        const result = await window.claude.acp.getConfigOptions(sessionId);
+        acpConfigOptions = (result?.configOptions ?? []) as typeof acpConfigOptions;
+      } catch {
+        // The session may no longer have a live ACP process.
+      }
+      // Per-session last-known options (persisted on the session record) beat the
+      // agent-level cache: values differ between sessions of the same agent.
+      if (acpConfigOptions.length === 0) {
+        if (session.cachedConfigOptions?.length) {
+          acpConfigOptions = session.cachedConfigOptions;
+        } else {
+          try {
+            const full = await window.claude.sessions.load(session.projectId, sessionId);
+            if (full?.cachedConfigOptions?.length) acpConfigOptions = full.cachedConfigOptions;
+          } catch {
+            // Session file may be unavailable.
+          }
+        }
+      }
+      if (acpConfigOptions.length === 0 && session.agentId) {
+        acpConfigOptions = (installedAgentsRef.current ?? []).find((agent) => agent.id === session.agentId)?.cachedConfigOptions ?? [];
+      }
+    }
+    const engineIcon = resolveEngineIcon(engineId, session.agentId);
+    // ACP sessions carry no model field — surface the current model config option instead.
+    const acpModelOption = engineId === "acp" ? acpConfigOptions.find((o) => o.id === "model") : undefined;
+    const acpModelChoices = (acpModelOption?.options ?? []).flatMap((o) => ("value" in o ? [o] : (o.options ?? [])));
+    const acpModelLabel = acpModelOption
+      ? (acpModelChoices.find((o) => o.value === acpModelOption.currentValue)?.name ?? acpModelOption.currentValue ?? "")
+      : "";
+    const availableModels = engineId === "codex"
+      ? toRemoteModelOptions(codexRawModelsRef.current)
+      : engineId === "acp"
+        ? []
+        : toRemoteModelOptions(active ? remoteSupportedModelsRef.current : cachedModelsRef.current);
+    const summary: RemoteSessionSummary = {
+      id: session.id,
+      projectId: session.projectId,
+      ...(project?.name ? { projectName: project.name } : {}),
+      title: session.title,
+      createdAt: session.createdAt,
+      ...(session.lastMessageAt !== undefined ? { lastMessageAt: session.lastMessageAt } : {}),
+      ...(session.engine ? { engine: session.engine } : {}),
+      ...(session.agentId ? { agentId: session.agentId } : {}),
+      ...(engineIcon ? { engineIcon } : {}),
+      ...((session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelLabel)
+        ? { model: session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelLabel }
+        : {}),
+      ...(session.effort ? { effort: session.effort } : {}),
+      ...((session.permissionMode || (active ? sessionInfoRef.current?.permissionMode : undefined))
+        ? { permissionMode: session.permissionMode || sessionInfoRef.current?.permissionMode }
+        : {}),
+      ...(session.planMode !== undefined ? { planMode: session.planMode } : {}),
+      ...(availableModels.length > 0 ? { availableModels } : {}),
+      ...(engineId === "acp" && acpConfigOptions.length > 0
+        ? { availableConfigOptions: acpConfigOptions }
+        : {}),
+      ...(session.isProcessing !== undefined ? { isProcessing: session.isProcessing } : {}),
+      ...(session.hasPendingPermission !== undefined ? { hasPendingPermission: session.hasPendingPermission } : {}),
+      ...(session.hasUnreadCompletion !== undefined ? { hasUnreadCompletion: session.hasUnreadCompletion } : {}),
+    };
+
+    if (active) {
+      const serialized = toRemoteMessages(messagesRef.current, isProcessingRef.current);
+      return {
+        session: summary,
+        messages: serialized.messages,
+        isProcessing: isProcessingRef.current,
+        isConnected: isConnectedRef.current,
+        totalCost: totalCostRef.current,
+        contextUsage: contextUsageRef.current,
+        pendingPermission: toRemotePermission(pendingPermissionRef.current),
+        truncated: serialized.truncated,
+      };
+    }
+
+    if (background) {
+      const backgroundTail = backgroundStoreRef.current.getMessageTail(sessionId, REMOTE_MESSAGE_LIMIT);
+      const serialized = backgroundTail
+        ? {
+            messages: toRemoteMessages(backgroundTail.messages, background.isProcessing).messages,
+            truncated: backgroundTail.truncated,
+          }
+        : toRemoteMessages(background.messages, background.isProcessing);
+      const backgroundSummary: RemoteSessionSummary = {
+        ...summary,
+        ...(background.sessionInfo?.model ? { model: background.sessionInfo.model } : {}),
+        ...(background.sessionInfo?.permissionMode ? { permissionMode: background.sessionInfo.permissionMode } : {}),
+        ...(background.configOptions?.length ? { availableConfigOptions: background.configOptions } : {}),
+      };
+      return {
+        session: backgroundSummary,
+        messages: serialized.messages,
+        isProcessing: background.isProcessing,
+        isConnected: background.isConnected,
+        totalCost: background.totalCost,
+        contextUsage: background.contextUsage,
+        pendingPermission: toRemotePermission(background.pendingPermission),
+        truncated: serialized.truncated,
+      };
+    }
+
+    const persisted = await window.claude.sessions.load(session.projectId, sessionId);
+    if (!persisted) return null;
+    const serialized = toRemoteMessages(persisted.messages ?? []);
+    return {
+      session: summary,
+      messages: serialized.messages,
+      isProcessing: false,
+      isConnected: false,
+      totalCost: persisted.totalCost ?? 0,
+      contextUsage: persisted.contextUsage ?? null,
+      pendingPermission: null,
+      truncated: serialized.truncated,
+    };
+  }, []);
+
+  const sendToSession = useCallback(async (
+    sessionId: string,
+    text: string,
+    images?: ImageAttachment[],
+  ): Promise<void> => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session || !text.trim()) throw new Error("Session not found");
+
+    if (activeSessionIdRef.current === sessionId) {
+      await send(text, images);
+      return;
+    }
+
+    // Live background sessions can receive a message without changing the
+    // desktop's active tab. Dead sessions fall back to the normal revival path.
+    if (!liveSessionIdsRef.current.has(sessionId)) {
+      await switchSession(sessionId);
+      const deadline = Date.now() + 3_000;
+      while (activeSessionIdRef.current !== sessionId && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (activeSessionIdRef.current !== sessionId) throw new Error("Could not activate session");
+      await send(text, images);
+      return;
+    }
+
+    const background = backgroundStoreRef.current.get(sessionId);
+    if (!background) throw new Error("Live session state is unavailable");
+    if (background.isProcessing) {
+      throw new Error("Session is still working. Wait for it to finish before sending another message.");
+    }
+    const sentAt = Date.now();
+    setSessions((prev) => prev.map((entry) => (
+      entry.id === sessionId
+        ? { ...entry, lastMessageAt: sentAt, isProcessing: true }
+        : entry
+    )));
+    backgroundStoreRef.current.updateMessages(sessionId, (messages) => [
+      ...messages,
+      createUserMessage(text, images),
+    ]);
+    backgroundStoreRef.current.setProcessing(sessionId, true);
+
+    try {
+      const engineId = session.engine ?? "claude";
+      if (engineId === "acp") {
+        const result = await window.claude.acp.prompt(sessionId, text, images);
+        if (result?.error) throw new Error(result.error);
+        return;
+      }
+      if (engineId === "codex") {
+        const result = await window.claude.codex.send(
+          sessionId,
+          text,
+          imageAttachmentsToCodexInputs(images),
+          session.effort,
+          session.planMode
+            ? buildCodexCollabMode(session.planMode, session.model)
+            : undefined,
+        );
+        if (result?.error) throw new Error(result.error);
+        return;
+      }
+
+      const result = await window.claude.send(sessionId, {
+        type: "user",
+        message: { role: "user", content: buildSdkContent(text) },
+      });
+      if (result?.error) throw new Error(result.error);
+    } catch (error) {
+      backgroundStoreRef.current.setProcessing(sessionId, false);
+      setSessions((prev) => prev.map((entry) => (
+        entry.id === sessionId ? { ...entry, isProcessing: false } : entry
+      )));
+      throw error;
+    }
+  }, [send, switchSession]);
+
+  const activateSession = useCallback(async (sessionId: string): Promise<void> => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) throw new Error("Session not found");
+    if (activeSessionIdRef.current !== sessionId) {
+      await switchSession(sessionId);
+      const deadline = Date.now() + 10_000;
+      while (activeSessionIdRef.current !== sessionId && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (activeSessionIdRef.current !== sessionId) {
+      throw new Error("Could not activate session");
+    }
+  }, [switchSession]);
+
+  /** Revive the session's process only when it is neither active nor already live —
+   *  used by remote settings changes that need a running ACP agent. */
+  const ensureSessionLive = useCallback(async (sessionId: string): Promise<void> => {
+    if (!sessionsRef.current.some((entry) => entry.id === sessionId)) throw new Error("Session not found");
+    if (liveSessionIdsRef.current.has(sessionId)) return;
+
+    const session = sessionsRef.current.find((s) => s.id === sessionId);
+    const isAcpSession = session?.engine === "acp";
+
+    // For ACP sessions, switch active first so the revival hook fires (it only
+    // revives the active session) and the useACP pane state is primed for the
+    // setConfig that follows.
+    if (isAcpSession && activeSessionIdRef.current !== sessionId) {
+      await activateSession(sessionId);
+    }
+
+    // If still not live (active-but-dead, or non-ACP), drive the revival directly.
+    if (!liveSessionIdsRef.current.has(sessionId) && isAcpSession) {
+      const result = await reviveAcpSessionById(sessionId);
+      if (!result.ok) throw new Error(result.error || "Failed to revive ACP session");
+    }
+
+    // Wait for the live ref to commit so a subsequent setConfig reaches main.
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      if (liveSessionIdsRef.current.has(sessionId)) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("Session did not come back online within 15s");
+  }, [activateSession, reviveAcpSessionById]);
+
+  const interruptSession = useCallback(async (sessionId: string): Promise<void> => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) throw new Error("Session not found");
+    if (!liveSessionIdsRef.current.has(sessionId)) {
+      throw new Error("Session is not currently running");
+    }
+    const engineId = session.engine ?? "claude";
+    const result = engineId === "acp"
+      ? await window.claude.acp.cancel(sessionId)
+      : engineId === "codex"
+        ? await window.claude.codex.interrupt(sessionId)
+        : await window.claude.interrupt(sessionId);
+    if (result?.error) throw new Error(result.error);
+  }, []);
+
+  const retrySession = useCallback(async (sessionId: string): Promise<void> => {
+    const snapshot = await getRemoteSnapshot(sessionId);
+    const lastUserMessage = snapshot?.messages.slice().reverse().find((message) => message.role === "user");
+    if (!lastUserMessage?.content.trim()) throw new Error("No previous user message to retry");
+    await sendToSession(sessionId, lastUserMessage.content);
+  }, [getRemoteSnapshot, sendToSession]);
+
+  const respondToSessionPermission = useCallback(async (
+    sessionId: string,
+    requestId: string,
+    behavior: AppPermissionBehavior,
+    input?: Record<string, unknown>,
+    newPermissionMode?: string,
+  ): Promise<void> => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) throw new Error("Session not found");
+    if (activeSessionIdRef.current === sessionId) {
+      const current = pendingPermissionRef.current;
+      if (!current || current.requestId !== requestId) throw new Error("Permission request is stale");
+      await engine.respondPermission(behavior, input, newPermissionMode);
+      return;
+    }
+
+    const background = backgroundStoreRef.current.get(sessionId);
+    const permission = background?.pendingPermission;
+    if (!background || !permission || permission.requestId !== requestId) {
+      throw new Error("Permission request is stale");
+    }
+
+    if (session.engine === "acp") {
+      const raw = background.rawAcpPermission;
+      if (!raw) throw new Error("ACP permission details are unavailable");
+      const optionId = behavior === "deny"
+        ? raw.options.find((option) => option.kind.startsWith("reject"))?.optionId
+        : raw.options.find((option) => option.kind.startsWith("allow"))?.optionId;
+      if (!optionId) throw new Error("No matching ACP permission option is available");
+      const result = await window.claude.acp.respondPermission(sessionId, requestId, optionId);
+      if (result?.error) throw new Error(result.error);
+    } else if (session.engine === "codex") {
+      const rpcId = permission.codexRpcId ?? permission.requestId;
+      if (permission.toolName === "AskUserQuestion") {
+        if (behavior === "deny") {
+          const result = await window.claude.codex.respondServerRequestError(
+            sessionId,
+            rpcId,
+            -32001,
+            "User declined requestUserInput",
+          );
+          if (result?.error) throw new Error(result.error);
+        } else {
+          const rawAnswers = (input?.answersByQuestionId ?? {}) as Record<string, string[]>;
+          const answers = Object.fromEntries(
+            Object.entries(rawAnswers).map(([id, values]) => [id, {
+              answers: values.map((value) => value.trim()).filter(Boolean),
+            }]),
+          );
+          const result = await window.claude.codex.respondUserInput(sessionId, rpcId, answers);
+          if (result?.error) throw new Error(result.error);
+        }
+      } else {
+        const result = await window.claude.codex.respondApproval(
+          sessionId,
+          rpcId,
+          behavior === "deny" ? "decline" : "accept",
+          behavior === "allowForSession" ? { forSession: true } : undefined,
+        );
+        if (result?.error) throw new Error(result.error);
+      }
+    } else {
+      const result = await window.claude.respondPermission(
+        sessionId,
+        requestId,
+        behavior,
+        permission.toolUseId,
+        permission.toolInput,
+        newPermissionMode,
+      );
+      if (result?.error) throw new Error(result.error);
+    }
+
+    backgroundStoreRef.current.clearPermission(sessionId);
+    setSessions((prev) => prev.map((entry) => (
+      entry.id === sessionId ? { ...entry, hasPendingPermission: false } : entry
+    )));
+  }, [engine, setSessions]);
+
   // ── Return ──
   return {
     primaryPane,
@@ -573,6 +1082,8 @@ export function useSessionManager(
     setActiveClaudeEffort,
     setActiveClaudeModelAndEffort,
     setSessionClaudeModelAndEffort,
+    setSessionEffort,
+    updateSessionSettings,
     restartActiveSessionInCurrentWorktree,
     setDraftAgent,
     messages: engine.messages,
@@ -587,6 +1098,14 @@ export function useSessionManager(
     seedDevExampleConversation,
     refreshSessions,
     loadSplitPaneBootstrap,
+    getRemoteSnapshot,
+    resolveEngineIcon,
+    sendToSession,
+    activateSession,
+    ensureSessionLive,
+    interruptSession,
+    retrySession,
+    respondToSessionPermission,
     queuedCount,
     stop: engine.stop,
     interrupt: async () => {
@@ -617,6 +1136,7 @@ export function useSessionManager(
         ? acp.slashCommands
         : claude.slashCommands,
     acpConfigOptions: acp.configOptions,
+    acpConfigSessionId: acp.configOptionsSessionId,
     acpConfigOptionsLoading,
     setACPConfig: acp.setConfig,
     mcpServerStatuses: isACP || isCodex

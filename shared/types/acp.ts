@@ -91,6 +91,11 @@ export interface ACPTurnCompleteEvent {
   usage?: { inputTokens?: number; outputTokens?: number } | null;
 }
 
+export interface ACPPromptErrorEvent {
+  _sessionId: string;
+  error: string;
+}
+
 export interface ACPAuthEnvVar {
   name: string;
   label?: string | null;

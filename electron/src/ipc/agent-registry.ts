@@ -10,6 +10,7 @@ import {
 } from "../lib/agent-registry";
 import type { InstalledAgent } from "../lib/agent-registry";
 import type { ACPConfigOption } from "@shared/types/acp";
+import { browseRemoteDirectory } from "../lib/remote-directory";
 
 export function register(): void {
   loadUserAgents();
@@ -35,4 +36,14 @@ export function register(): void {
       checkBinaries(agents),
   );
   ipcMain.handle("agents:get-platform-keys", () => getRegistryPlatformKeys());
+  ipcMain.handle(
+    "agents:browse-directory",
+    async (_e, input: { binary: string; args?: string[]; directory: string }) => {
+      try {
+        return { listing: await browseRemoteDirectory(input) };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  );
 }

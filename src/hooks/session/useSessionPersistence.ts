@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
-import type { PersistedSession, ClaudeEvent, SystemInitEvent, EngineId, ACPSessionEvent, ACPPermissionEvent, ACPTurnCompleteEvent } from "@/types";
+import type { PersistedSession, ClaudeEvent, SystemInitEvent, EngineId, ACPSessionEvent, ACPPermissionEvent, ACPTurnCompleteEvent, ACPPromptErrorEvent } from "@/types";
 import { canonicalizeModelValue } from "@/lib/model-utils";
 import { getSessionNotificationActor } from "@/lib/session-notifications";
 import { toMcpStatusState } from "../../lib/mcp-utils";
@@ -73,6 +73,11 @@ export function useSessionPersistence({
 
   // Wire up background store callbacks for sidebar indicators
   useEffect(() => {
+    backgroundStoreRef.current.onStateChange = (sessionId) => {
+      window.dispatchEvent(new CustomEvent("harnss:remote-session-updated", {
+        detail: { sessionId, notifyList: false },
+      }));
+    };
     backgroundStoreRef.current.onProcessingChange = (sessionId, isProcessing) => {
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       const wasProcessing = !!session?.isProcessing;
@@ -137,6 +142,11 @@ export function useSessionPersistence({
           permission,
         },
       }));
+    };
+    return () => {
+      backgroundStoreRef.current.onStateChange = undefined;
+      backgroundStoreRef.current.onProcessingChange = undefined;
+      backgroundStoreRef.current.onPermissionRequest = undefined;
     };
   }, [continueQueuedBackgroundSession, sessionsRef, setSessions, switchSessionRef, backgroundStoreRef]);
 
@@ -274,6 +284,12 @@ export function useSessionPersistence({
       backgroundStoreRef.current.handleACPTurnComplete(sid);
     });
 
+    const unsubBgAcpError = window.claude.acp.onPromptError((data: ACPPromptErrorEvent) => {
+      const sid = data._sessionId;
+      if (!sid || sid === activeSessionIdRef.current || visibleSplitSessionIdsRef.current.includes(sid)) return;
+      backgroundStoreRef.current.handleACPError(sid, data.error);
+    });
+
     // Route Codex events for non-active sessions to the background store
     const unsubCodex = window.claude.codex.onEvent((event) => {
       const sid = event._sessionId;
@@ -317,7 +333,7 @@ export function useSessionPersistence({
       });
     });
 
-    return () => { unsub(); unsubAcp(); unsubBgPerm(); unsubBgAcpPerm(); unsubBgAcpTurn(); unsubCodex(); unsubCodexApproval(); };
+    return () => { unsub(); unsubAcp(); unsubBgPerm(); unsubBgAcpPerm(); unsubBgAcpTurn(); unsubBgAcpError(); unsubCodex(); unsubCodexApproval(); };
   }, []);
 
   // Debounced auto-save
@@ -345,6 +361,7 @@ export function useSessionPersistence({
         engine: session.engine,
         ...(session.agentId ? { agentId: session.agentId } : {}),
         ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
+        ...(session.workingDirectory ? { workingDirectory: session.workingDirectory } : {}),
         ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
       };
       void persistSessionWithCodexFallback(data);
@@ -467,6 +484,7 @@ export function useSessionPersistence({
         pendingPermission: pendingPermissionRef.current ?? null,
         rawAcpPermission: null, // ACP ref is internal to useACP — will be restored via initialRawAcpPermission
         slashCommands,
+        configOptions: sessionEngine === "acp" ? acp.configOptions : [],
       });
     }
   }, [claude.slashCommands, acp.slashCommands, codex.slashCommands]);

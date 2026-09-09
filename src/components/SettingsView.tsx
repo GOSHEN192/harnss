@@ -29,6 +29,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { isMac } from "@/lib/utils";
 import type { AppSettings } from "@/types";
 import { useAgentContext } from "./AgentContext";
+import { useTranslation } from "@/lib/i18n";
 
 // ── Section definitions ──
 
@@ -82,6 +83,7 @@ export const SettingsView = memo(function SettingsView({
   initialSection,
 }: SettingsViewProps) {
   const { agents, saveAgent, deleteAgent } = useAgentContext();
+  const { t } = useTranslation();
   const islandLayout = useSettingsStore((s) => s.islandLayout);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection ?? "general");
   const macIslandTitlebarOffsetClass = "";
@@ -168,8 +170,8 @@ export const SettingsView = memo(function SettingsView({
       case "skills":
         return (
           <PlaceholderSection
-            title="Skills"
-            description="Create, install, and manage agent skills that extend what your AI coding agents can do."
+            title={t("Skills")}
+            description={t("Create, install, and manage agent skills that extend what your AI coding agents can do.")}
             icon={Sparkles}
             comingSoon
           />
@@ -177,8 +179,8 @@ export const SettingsView = memo(function SettingsView({
       case "custom-agents":
         return (
           <PlaceholderSection
-            title="Agents"
-            description="Build and configure custom agents with specialized tools, prompts, and workflows."
+            title={t("Agents")}
+            description={t("Build and configure custom agents with specialized tools, prompts, and workflows.")}
             icon={Users}
             comingSoon
           />
@@ -188,7 +190,7 @@ export const SettingsView = memo(function SettingsView({
       default:
         return null;
     }
-  }, [activeSection, appSettings, updateAppSettings, agents, saveAgent, deleteAgent, glassSupported, macLiquidGlassSupported, onReplayWelcome]);
+  }, [activeSection, appSettings, updateAppSettings, agents, saveAgent, deleteAgent, glassSupported, macLiquidGlassSupported, onReplayWelcome, t]);
 
   return (
     <div className={`island flex flex-1 flex-col overflow-hidden bg-background ${islandLayout ? "rounded-[var(--island-radius)]" : "rounded-none"}`}>
@@ -209,7 +211,7 @@ export const SettingsView = memo(function SettingsView({
             <PanelLeft className="h-4 w-4" />
           </Button>
         )}
-        <span className={`leading-none text-sm font-semibold text-foreground ${macIslandTitlebarOffsetClass}`}>Settings</span>
+        <span className={`leading-none text-sm font-semibold text-foreground ${macIslandTitlebarOffsetClass}`}>{t("Settings")}</span>
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -231,10 +233,10 @@ export const SettingsView = memo(function SettingsView({
                   }`}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1">{item.label}</span>
+                  <span className="flex-1">{t(item.label)}</span>
                   {item.comingSoon && (
                     <span className="rounded bg-foreground/[0.06] px-1.5 py-px text-[10px] font-medium text-muted-foreground/70">
-                      Soon
+                      {t("Soon")}
                     </span>
                   )}
                 </button>

@@ -139,7 +139,7 @@ export function useDraftMaterialization({
     try {
       result = await window.claude.acp.start({
         agentId,
-        cwd: getProjectCwd(project),
+        cwd: options?.workingDirectory?.trim() || getProjectCwd(project),
         mcpServers,
       });
     } catch (err) {
@@ -377,7 +377,7 @@ export function useDraftMaterialization({
         } else {
           const result = await window.claude.acp.start({
             agentId: options.agentId,
-            cwd: getProjectCwd(project),
+            cwd: options.workingDirectory?.trim() || getProjectCwd(project),
             mcpServers,
           });
           if ("cancelled" in result && result.cancelled) {
@@ -618,6 +618,7 @@ export function useDraftMaterialization({
         ...(draftEngine === "acp" && options.agentId ? {
           agentId: options.agentId,
           agentSessionId: acpAgentSessionIdRef.current ?? undefined,
+          workingDirectory: options.workingDirectory?.trim() || undefined,
         } : {}),
         ...(draftEngine === "codex" ? {
           agentId: options.agentId ?? "codex",
@@ -660,7 +661,12 @@ export function useDraftMaterialization({
       setTimeout(() => { claude.refreshMcpStatus(); }, 500);
 
       // Fire-and-forget AI title generation — routes through ACP if that's the active engine
-      generateSessionTitle(sessionId, text, getProjectCwd(project), draftEngine);
+      generateSessionTitle(
+        sessionId,
+        text,
+        draftEngine === "acp" ? (options.workingDirectory?.trim() || getProjectCwd(project)) : getProjectCwd(project),
+        draftEngine,
+      );
 
       materializingRef.current = false;
       return sessionId;

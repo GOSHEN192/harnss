@@ -52,4 +52,16 @@ describe("settings store", () => {
     expect(secondProjects["project-1"]?.activeTools).toBe(firstActiveTools);
     expect(secondProjects["project-1"]?.activeTools).toEqual(["tasks"]);
   });
+
+  it("persists the selected interface language", async () => {
+    const { useSettingsStore } = await import("./settings-store");
+
+    useSettingsStore.getState().setLanguage("zh");
+
+    expect(useSettingsStore.getState().language).toBe("zh");
+    const persisted = JSON.parse(localStorage.getItem("harnss-settings-store") ?? "{}") as {
+      state?: { language?: string };
+    };
+    expect(persisted.state?.language).toBe("zh");
+  });
 });

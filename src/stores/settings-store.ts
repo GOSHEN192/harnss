@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { ToolId } from "@/types/tools";
 import type { AcpPermissionBehavior, ClaudeEffort, EngineId, MacBackgroundEffect, ThemeOption } from "@/types";
+import type { Language } from "@/lib/i18n/translations";
 
 // ── Constants ──
 
@@ -89,6 +90,7 @@ export interface ProjectSettings {
 
 /** Global settings state (not per-project) */
 interface GlobalSettingsState {
+  language: Language;
   theme: ThemeOption;
   islandLayout: boolean;
   islandShine: boolean;
@@ -114,6 +116,7 @@ interface GlobalSettingsState {
 /** Actions (setters) — excluded from persistence via partialize */
 interface SettingsActions {
   // Global setters
+  setLanguage: (language: Language) => void;
   setTheme: (t: ThemeOption) => void;
   setIslandLayout: (enabled: boolean) => void;
   setIslandShine: (enabled: boolean) => void;
@@ -266,6 +269,7 @@ function readLegacyJson<T>(key: string, fallback: T): T {
 }
 
 function readLegacyGlobalSettings(): GlobalSettingsState {
+  const language: Language = localStorage.getItem("harnss-language") === "zh" ? "zh" : "en";
   const themeRaw = localStorage.getItem("harnss-theme");
   const theme: ThemeOption = (themeRaw === "light" || themeRaw === "dark" || themeRaw === "system") ? themeRaw : "dark";
 
@@ -299,6 +303,7 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
       : DEFAULT_CLAUDE_EFFORT;
 
   return {
+    language,
     theme,
     islandLayout: readLegacyBool("harnss-island-layout", true),
     islandShine: readLegacyBool("harnss-island-shine", true),
@@ -413,6 +418,7 @@ export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
       // ── Global state defaults ──
+      language: "en",
       theme: "dark",
       islandLayout: true,
       islandShine: true,
@@ -435,6 +441,11 @@ export const useSettingsStore = create<SettingsStore>()(
       projects: {},
 
       // ── Global setters ──
+
+      setLanguage: (language) => {
+        if (language !== "en" && language !== "zh") return;
+        set({ language });
+      },
 
       setTheme: (t) => set({ theme: t }),
 
@@ -602,6 +613,7 @@ export const useSettingsStore = create<SettingsStore>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         // Global state
+        language: state.language,
         theme: state.theme,
         islandLayout: state.islandLayout,
         islandShine: state.islandShine,
@@ -630,6 +642,7 @@ export const useSettingsStore = create<SettingsStore>()(
         return {
           ...current,
           ...incoming,
+          language: incoming.language === "zh" ? "zh" : "en",
           // Ensure projects is always an object, never undefined
           projects: incoming.projects ?? current.projects,
         };

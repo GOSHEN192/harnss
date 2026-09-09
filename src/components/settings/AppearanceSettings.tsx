@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import { useSettingsStore, deriveMacBackgroundEffect } from "@/stores/settings-store";
 import { isMac } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 // ── Props ──
 
@@ -20,6 +21,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
   glassSupported,
   macLiquidGlassSupported,
 }: AppearanceSettingsProps) {
+  const { t } = useTranslation();
   // ── Read all appearance settings from the Zustand store ──
   const theme = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -158,9 +160,9 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           {/* ── Layout section ── */}
           <SettingsSection icon={Layout} label="Layout">
             <div className="py-3">
-              <p className="text-sm font-medium text-foreground">Window layout</p>
+              <p className="text-sm font-medium text-foreground">{t("Window layout")}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Choose how panels are arranged in the window.
+                {t("Choose how panels are arranged in the window.")}
               </p>
               <div className="mt-3 flex gap-3">
                 {/* ── Island preview ── */}
@@ -198,7 +200,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Islands
+                    {t("Islands")}
                   </p>
                 </button>
 
@@ -244,7 +246,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     !islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Flat
+                    {t("Flat")}
                   </p>
                 </button>
               </div>

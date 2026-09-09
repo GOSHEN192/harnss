@@ -1,6 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import type { PersistedSession, ClaudeEffort } from "../../types";
+import type { RemoteSessionSettingsInput } from "@shared/types/remote";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { capture, captureException } from "../../lib/analytics/analytics";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
@@ -35,7 +36,7 @@ export function useSessionSettings({
     if (!normalized) return undefined;
     return normalized.toLowerCase() === "default" ? undefined : normalized;
   }, []);
-  const { claude, engine } = engines;
+  const { claude, acp, codex, engine } = engines;
   const {
     setSessions,
     setStartOptions,
@@ -57,10 +58,10 @@ export function useSessionSettings({
 
   // ── Shared helper: persist a partial session update to state + disk ──
 
-  const persistSessionPatch = useCallback((
+  const persistSessionPatch = useCallback(async (
     sessionId: string,
     patch: Partial<PersistedSession>,
-  ) => {
+  ): Promise<void> => {
     const session = sessionsRef.current.find((entry) => entry.id === sessionId);
     if (!session) return;
 
@@ -68,12 +69,28 @@ export function useSessionSettings({
       prev.map((entry) => (entry.id === sessionId ? { ...entry, ...patch } : entry)),
     );
 
-    window.claude.sessions.load(session.projectId, sessionId).then((data) => {
+    try {
+      const data = await window.claude.sessions.load(session.projectId, sessionId);
       if (data) {
-        window.claude.sessions.save({ ...data, ...patch });
+        await window.claude.sessions.save({ ...data, ...patch });
       }
-    }).catch(() => { /* session may have been deleted */ });
+    } catch {
+      // Session may have been deleted while the patch was being applied.
+    }
   }, [sessionsRef, setSessions]);
+
+  // ── Per-session ACP config persistence ──
+  // Whenever options load for a session (config_option_update, buffered fetch, revive),
+  // remember them on the session record so dead sessions still show their own
+  // model/permission settings (mobile remote console, app restarts). The
+  // configOptionsSessionId owner tag guarantees we never persist one session's
+  // options onto another session.
+  useEffect(() => {
+    const ownerId = acp.configOptionsSessionId;
+    const options = acp.configOptions;
+    if (!ownerId || ownerId === DRAFT_ID || !options?.length) return;
+    void persistSessionPatch(ownerId, { cachedConfigOptions: options });
+  }, [acp.configOptions, acp.configOptionsSessionId, persistSessionPatch]);
 
   // ── Active model ──
 
@@ -514,6 +531,98 @@ export function useSessionSettings({
     persistSessionPatch(sessionId, { model, effort });
   }, [getClaudeSdkModel, liveSessionIdsRef, persistSessionPatch, sessionsRef]);
 
+  const setSessionEffort = useCallback(async (sessionId: string, effort: string) => {
+    if (!sessionId || sessionId === DRAFT_ID || !effort.trim()) return;
+
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) return;
+
+    if ((session.engine ?? "claude") === "claude") {
+      await setSessionClaudeModelAndEffort(sessionId, session.model ?? "default", effort as ClaudeEffort);
+      return;
+    }
+
+    persistSessionPatch(sessionId, { effort: effort as ClaudeEffort });
+    if ((session.engine ?? "claude") === "codex" && activeSessionIdRef.current === sessionId) {
+      codex.setCodexEffort(effort);
+    }
+  }, [activeSessionIdRef, codex, persistSessionPatch, sessionsRef, setSessionClaudeModelAndEffort]);
+
+  const updateSessionSettings = useCallback(async (
+    sessionId: string,
+    settings: RemoteSessionSettingsInput,
+  ): Promise<void> => {
+    if (!sessionId || sessionId === DRAFT_ID) return;
+
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session) return;
+
+    const engineId = session.engine ?? "claude";
+    const nextModel = settings.model?.trim() || session.model || "default";
+    const nextEffort = settings.effort?.trim() || session.effort;
+    const nextPermissionMode = settings.permissionMode?.trim();
+    const nextPlanMode = settings.planMode;
+    const patch: Partial<PersistedSession> = {};
+
+    if (settings.model !== undefined) patch.model = nextModel;
+    if (nextEffort) patch.effort = nextEffort as ClaudeEffort;
+    if (nextPermissionMode) patch.permissionMode = nextPermissionMode;
+    if (nextPlanMode !== undefined) patch.planMode = nextPlanMode;
+
+    if (engineId === "claude" && liveSessionIdsRef.current.has(sessionId)) {
+      if (settings.model !== undefined && settings.effort === undefined) {
+        const modelResult = await window.claude.setModel(sessionId, getClaudeSdkModel(nextModel));
+        if (modelResult?.error) throw new Error(modelResult.error);
+      } else if (settings.model !== undefined || settings.effort !== undefined) {
+        const restartResult = await window.claude.restartSession(
+          sessionId,
+          undefined,
+          undefined,
+          nextEffort as ClaudeEffort | undefined,
+          getClaudeSdkModel(nextModel),
+        );
+        if (restartResult?.error) throw new Error(restartResult.error);
+      }
+
+      if (nextPermissionMode || nextPlanMode !== undefined) {
+        const effectiveMode = getEffectiveClaudePermissionMode({
+          permissionMode: nextPermissionMode || session.permissionMode || DEFAULT_PERMISSION_MODE,
+          planMode: nextPlanMode ?? !!session.planMode,
+        });
+        const modeResult = await window.claude.setPermissionMode(sessionId, effectiveMode);
+        if (modeResult?.error) throw new Error(modeResult.error);
+      }
+    } else if (engineId === "codex") {
+      if (settings.model !== undefined && liveSessionIdsRef.current.has(sessionId)) {
+        const modelResult = await window.claude.codex.setModel(sessionId, nextModel);
+        if (modelResult?.error) throw new Error(modelResult.error);
+      }
+      if (settings.effort !== undefined && activeSessionIdRef.current === sessionId) {
+        codex.setCodexEffort(nextEffort ?? "medium");
+      }
+    } else if (engineId === "acp") {
+      const configValues = settings.configValues ?? {};
+      if (Object.keys(configValues).length === 0) return;
+      for (const [configId, value] of Object.entries(configValues)) {
+        const result = activeSessionIdRef.current === sessionId
+          ? await acp.setConfig(configId, value)
+          : await window.claude.acp.setConfig(sessionId, configId, value);
+        if (result?.error) throw new Error(result.error);
+      }
+      return;
+    }
+
+    await persistSessionPatch(sessionId, patch);
+  }, [
+    activeSessionIdRef,
+    acp,
+    codex,
+    getClaudeSdkModel,
+    liveSessionIdsRef,
+    persistSessionPatch,
+    sessionsRef,
+  ]);
+
   return {
     persistSessionPatch,
     setActiveModel,
@@ -526,5 +635,7 @@ export function useSessionSettings({
     setSessionPermissionMode,
     setSessionPlanMode,
     setSessionClaudeModelAndEffort,
+    setSessionEffort,
+    updateSessionSettings,
   };
 }

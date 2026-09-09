@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { ToolId, ToolDef } from "@/types/tools";
+import { useTranslation } from "@/lib/i18n";
 
 // Re-export for backward compatibility — consumers importing from ToolPicker continue to work
 export type { ToolId, ToolDef } from "@/types/tools";
@@ -127,6 +128,7 @@ function ToolButton({
   tooltipExtra?: React.ReactNode;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const Icon = tool.icon;
   const buttonSize = "h-8 w-8";
   const iconSize = "h-4 w-4";
@@ -157,9 +159,9 @@ function ToolButton({
         </button>
       </TooltipTrigger>
       <TooltipContent side="left" sideOffset={10}>
-        <p className="text-xs font-medium">{tool.label}</p>
+        <p className="text-xs font-medium">{t(tool.label)}</p>
         {tooltipExtra}
-        {isBottom && <p className="text-[10px] text-background/50">Bottom panel</p>}
+        {isBottom && <p className="text-[10px] text-background/50">{t("Bottom panel")}</p>}
       </TooltipContent>
     </Tooltip>
   );
@@ -204,6 +206,7 @@ function PanelToolWithMenu({
   moveToSideLabel?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { t } = useTranslation();
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -242,18 +245,18 @@ function PanelToolWithMenu({
         <DropdownMenuTrigger className="absolute inset-0 opacity-0 pointer-events-none" tabIndex={-1} />
         <DropdownMenuContent side="left" align="start" sideOffset={10}>
           <DropdownMenuItem disabled className="text-[11px] font-semibold tracking-wide text-foreground/50 uppercase">
-            {tool.label}
+            {t(tool.label)}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {isBottom ? (
             <DropdownMenuItem onClick={onMoveToSide} className="gap-2">
               <ArrowRight className="h-3.5 w-3.5" />
-              {moveToSideLabel}
+              {t(moveToSideLabel)}
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem onClick={onMoveToBottom} className="gap-2">
               <ArrowDown className="h-3.5 w-3.5" />
-              {moveToBottomLabel}
+              {t(moveToBottomLabel)}
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
@@ -279,6 +282,7 @@ export const ToolPicker = memo(function ToolPicker({
   onMoveToSide,
   taskProgress,
 }: ToolPickerProps) {
+  const { t } = useTranslation();
   // ── Layout & appearance settings from Zustand store ──
   const islandLayout = useSettingsStore((s) => s.islandLayout);
   const transparentBackground = useSettingsStore((s) => s.transparentToolPicker);
@@ -400,7 +404,7 @@ export const ToolPicker = memo(function ToolPicker({
                   onClick={() => onToggle(tool.id)}
                   tooltipExtra={hasTaskProgress ? (
                     <p className="text-[10px] text-background/50 tabular-nums">
-                      {taskProgress.completed}/{taskProgress.total} completed
+                      {taskProgress.completed}/{taskProgress.total} {t("completed")}
                     </p>
                   ) : undefined}
                 />
@@ -491,8 +495,8 @@ export const ToolPicker = memo(function ToolPicker({
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
                 <TooltipContent side="left" sideOffset={10}>
-                  <p className="text-xs font-medium">Open in Editor</p>
-                  <p className="text-[10px] text-background/50">Right-click for options</p>
+                  <p className="text-xs font-medium">{t("Open in Editor")}</p>
+                  <p className="text-[10px] text-background/50">{t("Right-click for options")}</p>
                 </TooltipContent>
               </Tooltip>
               <DropdownMenuContent side="left" align="end" sideOffset={10}>

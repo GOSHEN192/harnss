@@ -70,7 +70,7 @@ export function useSessionRestart({
     })));
 
     // Try session/load first — updates MCP on the existing connection, no context loss
-    const nextCwd = cwdOverride ?? getProjectCwd(project);
+    const nextCwd = cwdOverride ?? session.workingDirectory?.trim() ?? getProjectCwd(project);
     const reloadResult = await window.claude.acp.reloadSession(currentId, servers, nextCwd);
     if (reloadResult.supportsLoad && reloadResult.ok) {
       // session/load succeeded — session ID and process unchanged, context preserved

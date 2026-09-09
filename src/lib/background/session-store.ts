@@ -6,10 +6,11 @@ import type {
   SlashCommand,
   ContextUsage,
 } from "@/types";
-import type { ACPSessionEvent, ACPPermissionEvent, CodexSessionEvent } from "@/types";
+import type { ACPSessionEvent, ACPConfigOption, ACPPermissionEvent, CodexSessionEvent } from "@/types";
 import { handleClaudeEvent } from "./claude-handler";
 import { handleACPEvent as acpHandler, handleACPTurnComplete as acpTurnComplete } from "./acp-handler";
 import { handleCodexEvent as codexHandler } from "./codex-handler";
+import { createSystemMessage } from "../message-factory";
 
 export interface BackgroundSessionState {
   messages: UIMessage[];
@@ -24,6 +25,8 @@ export interface BackgroundSessionState {
   rawAcpPermission: ACPPermissionEvent | null;
   /** Slash commands available for this session (ACP agents update dynamically) */
   slashCommands: SlashCommand[];
+  /** Live ACP configuration options such as model, mode, or thought level. */
+  configOptions?: ACPConfigOption[];
 }
 
 export interface InternalState extends BackgroundSessionState {
@@ -48,6 +51,11 @@ export class BackgroundSessionStore {
   private sessions = new Map<string, InternalState>();
   onProcessingChange?: (sessionId: string, isProcessing: boolean) => void;
   onPermissionRequest?: PermissionRequestCallback;
+  onStateChange?: (sessionId: string) => void;
+
+  private notify(sessionId: string): void {
+    this.onStateChange?.(sessionId);
+  }
 
   private getOrCreate(sessionId: string): InternalState {
     let state = this.sessions.get(sessionId);
@@ -63,6 +71,7 @@ export class BackgroundSessionStore {
         pendingPermission: null,
         rawAcpPermission: null,
         slashCommands: [],
+        configOptions: [],
         parentToolMap: new Map(),
         currentStreamingMsgId: null,
         codexPlanText: "",
@@ -83,6 +92,7 @@ export class BackgroundSessionStore {
     if (result?.processingChanged) {
       this.onProcessingChange?.(sessionId, result.isProcessing);
     }
+    this.notify(sessionId);
   }
 
   handleACPEvent(event: ACPSessionEvent): void {
@@ -91,6 +101,10 @@ export class BackgroundSessionStore {
 
     const state = this.getOrCreate(sessionId);
     acpHandler(state, event);
+    if (event.update.sessionUpdate === "config_option_update") {
+      state.configOptions = event.update.configOptions;
+    }
+    this.notify(sessionId);
   }
 
   /** Handle ACP turn completion — finalize streaming, close tools, reset processing. */
@@ -99,6 +113,17 @@ export class BackgroundSessionStore {
     if (!state) return;
     acpTurnComplete(state);
     this.onProcessingChange?.(sessionId, false);
+    this.notify(sessionId);
+  }
+
+  handleACPError(sessionId: string, error: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    const wasProcessing = state.isProcessing;
+    acpTurnComplete(state);
+    state.messages = [...state.messages, createSystemMessage(`ACP prompt error: ${error}`, true)];
+    if (wasProcessing) this.onProcessingChange?.(sessionId, false);
+    this.notify(sessionId);
   }
 
   /** Handle a Codex notification for a background (non-active) session. */
@@ -114,6 +139,7 @@ export class BackgroundSessionStore {
     if (result?.permissionRequest) {
       this.onPermissionRequest?.(sessionId, result.permissionRequest);
     }
+    this.notify(sessionId);
   }
 
   /** Store a pending permission for a background session and fire the callback. */
@@ -122,6 +148,15 @@ export class BackgroundSessionStore {
     state.pendingPermission = permission;
     state.rawAcpPermission = rawAcpPermission ?? null;
     this.onPermissionRequest?.(sessionId, permission);
+    this.notify(sessionId);
+  }
+
+  clearPermission(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    state.pendingPermission = null;
+    state.rawAcpPermission = null;
+    this.notify(sessionId);
   }
 
   has(sessionId: string): boolean {
@@ -143,7 +178,26 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      configOptions: state.configOptions ?? [],
     };
+  }
+
+  getMessageTail(sessionId: string, limit: number): { messages: UIMessage[]; truncated: boolean } | undefined {
+    const state = this.sessions.get(sessionId);
+    if (!state) return undefined;
+    const tail: UIMessage[] = [];
+    let truncated = false;
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index];
+      if (message.isQueued) continue;
+      if (tail.length < limit) {
+        tail.push({ ...message });
+        continue;
+      }
+      truncated = true;
+      break;
+    }
+    return { messages: tail.reverse(), truncated };
   }
 
   consume(sessionId: string): BackgroundSessionState | undefined {
@@ -162,6 +216,7 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      configOptions: state.configOptions ?? [],
     };
   }
 
@@ -180,6 +235,7 @@ export class BackgroundSessionStore {
     if (!state || state.isProcessing === isProcessing) return;
     state.isProcessing = isProcessing;
     this.onProcessingChange?.(sessionId, isProcessing);
+    this.notify(sessionId);
   }
 
   /** Seed store with the current session state when switching away. */
@@ -239,12 +295,14 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission ?? null,
       slashCommands: state.slashCommands ?? [],
+      configOptions: state.configOptions ?? [],
       parentToolMap,
       currentStreamingMsgId: streamingMsg?.id ?? null,
       codexPlanText,
       codexPlanTurnCounter,
       activeTask: null,
     });
+    this.notify(sessionId);
   }
 
   /** Mark a session as disconnected (process exited). */
@@ -265,5 +323,6 @@ export class BackgroundSessionStore {
         msg.isStreaming = false;
       }
     }
+    this.notify(sessionId);
   }
 }

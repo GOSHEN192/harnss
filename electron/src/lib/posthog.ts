@@ -151,12 +151,38 @@ export async function captureEvent(
  * Use this for errors caught in IPC handlers, SDK event loops, child process
  * failures, etc. — anywhere you have an Error object and want a tracked
  * $exception event with stack trace.
+ *
+ * Rate-limited: error storms (e.g. Telegram bot failing against an
+ * unreachable api.telegram.org during a proxy outage) have produced
+ * thousands of unhandled rejections per minute; queueing every one of them
+ * as a $exception event bloats memory and the flush queue.
  */
+const EXCEPTION_CAPTURE_LIMIT = 30;
+const EXCEPTION_CAPTURE_WINDOW_MS = 60_000;
+let exceptionTimestamps: number[] = [];
+let exceptionsDropped = 0;
+
 export function captureException(
   error: Error,
   additionalProperties?: Record<string, unknown>,
 ): void {
   if (!client || !userId) return;
+
+  const now = Date.now();
+  exceptionTimestamps = exceptionTimestamps.filter(
+    (ts) => now - ts < EXCEPTION_CAPTURE_WINDOW_MS,
+  );
+  if (exceptionTimestamps.length >= EXCEPTION_CAPTURE_LIMIT) {
+    exceptionsDropped += 1;
+    if (exceptionsDropped === 1 || exceptionsDropped % 100 === 0) {
+      log(
+        "POSTHOG",
+        `exception capture rate-limited (${exceptionsDropped} dropped in the current window)`,
+      );
+    }
+    return;
+  }
+  exceptionTimestamps.push(now);
 
   try {
     client.captureException(error, userId, additionalProperties);

@@ -67,9 +67,10 @@ export function useSessionRevival({
       const mcpServers = await window.claude.mcp.list(session.projectId);
       const result = await window.claude.acp.reviveSession({
         agentId: session.agentId,
-        cwd: getProjectCwd(project),
+        cwd: session.workingDirectory?.trim() || getProjectCwd(project),
         agentSessionId: session.agentSessionId,
         mcpServers,
+        sessionId: oldId, // revived process reuses the existing session id — no rename
       });
 
       if (result.error || !result.sessionId) {
@@ -79,14 +80,15 @@ export function useSessionRevival({
 
       const newId = result.sessionId;
       liveSessionIdsRef.current.add(newId);
+      acp.setIsConnected(true);
       acpAgentIdRef.current = session.agentId;
       acpAgentSessionIdRef.current = result.agentSessionId ?? session.agentSessionId ?? null;
 
-      setSessions((prev) => prev.map((s) =>
-        s.id === oldId
-          ? { ...s, id: newId, agentSessionId: result.agentSessionId ?? s.agentSessionId }
-          : s,
-      ));
+      if (result.agentSessionId && result.agentSessionId !== session.agentSessionId) {
+        setSessions((prev) => prev.map((s) =>
+          s.id === oldId ? { ...s, agentSessionId: result.agentSessionId } : s,
+        ));
+      }
       setAcpMcpStatuses((result.mcpStatuses ?? []).map(s => ({
         name: s.name,
         status: toMcpStatusState(s.status),
@@ -118,6 +120,62 @@ export function useSessionRevival({
       }
     },
     [findProject, acp.setMessages, acp.setIsProcessing],
+  );
+
+  /** Revive a specific ACP session by id (no message-send). Used by remote
+   *  settings apply where the target may be the active session but dead. */
+  const reviveAcpSessionById = useCallback(
+    async (sessionId: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!sessionId || sessionId === DRAFT_ID) return { ok: false, error: "Invalid session id" };
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      if (!session || !session.agentId) return { ok: false, error: "Session is not ACP or has no agentId" };
+      const project = findProject(session.projectId);
+      if (!project) return { ok: false, error: "Project not found" };
+
+      const mcpServers = await window.claude.mcp.list(session.projectId);
+      const result = await window.claude.acp.reviveSession({
+        agentId: session.agentId,
+        cwd: session.workingDirectory?.trim() || getProjectCwd(project),
+        agentSessionId: session.agentSessionId,
+        mcpServers,
+        sessionId, // reuse the existing session id
+      });
+
+      if (result.error || !result.sessionId) {
+        return { ok: false, error: result.error || "Failed to revive ACP session" };
+      }
+
+      const newId = result.sessionId;
+      liveSessionIdsRef.current.add(newId);
+      acp.setIsConnected(true);
+      acpAgentIdRef.current = session.agentId;
+      acpAgentSessionIdRef.current = result.agentSessionId ?? session.agentSessionId ?? null;
+
+      if (result.agentSessionId && result.agentSessionId !== session.agentSessionId) {
+        setSessions((prev) => prev.map((s) =>
+          s.id === sessionId ? { ...s, agentSessionId: result.agentSessionId } : s,
+        ));
+      }
+      setAcpMcpStatuses((result.mcpStatuses ?? []).map(s => ({
+        name: s.name,
+        status: toMcpStatusState(s.status),
+      })));
+      // Only re-prime the active pane if this IS the active session — otherwise
+      // the pane state belongs to whatever the user is currently looking at.
+      if (activeSessionIdRef.current === sessionId) {
+        setInitialMessages(messagesRef.current);
+        setInitialMeta({
+          isProcessing: false,
+          isConnected: true,
+          sessionInfo: null,
+          totalCost: totalCostRef.current,
+          contextUsage: contextUsageRef.current,
+        });
+        if (result.configOptions?.length) setInitialConfigOptions(result.configOptions);
+      }
+      return { ok: true };
+    },
+    [findProject],
   );
 
   /** Revive a dead Codex session — spawn new app-server + thread/resume */
@@ -299,6 +357,7 @@ export function useSessionRevival({
   return {
     reviveSession,
     reviveAcpSession,
+    reviveAcpSessionById,
     reviveCodexSession,
   };
 }

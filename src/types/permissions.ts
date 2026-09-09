@@ -1,5 +1,7 @@
 // ── Permission types ──
 
+import type { AcpPermissionBehavior } from "@shared/types/engine";
+
 export type PermissionUpdateDestination = "userSettings" | "projectSettings" | "localSettings" | "session";
 
 export interface PermissionRuleValue {
@@ -30,4 +32,4 @@ export interface PermissionRequest {
  * ACP agents provide their own permission options (allow_once, allow_always, etc.).
  * This setting controls whether the client auto-responds or prompts the user.
  */
-export type AcpPermissionBehavior = "ask" | "auto_accept" | "allow_all";
+export type { AcpPermissionBehavior };

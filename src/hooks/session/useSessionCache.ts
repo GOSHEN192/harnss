@@ -103,6 +103,7 @@ export function useSessionCache({
             ...(data.engine ? { engine: data.engine } : {}),
             ...(data.agentId ? { agentId: data.agentId } : {}),
             ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),
+            ...(data.workingDirectory ? { workingDirectory: data.workingDirectory } : {}),
             ...(data.codexThreadId ? { codexThreadId: data.codexThreadId } : {}),
             ...(data.effort ? { effort: data.effort } : {}),
             ...(data.permissionMode ? { permissionMode: data.permissionMode } : {}),

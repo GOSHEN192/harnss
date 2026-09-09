@@ -27,6 +27,13 @@ export type EngineId = "claude" | "acp" | "codex";
  */
 export type AppPermissionBehavior = "allow" | "deny" | "allowForSession";
 
+/** Client-side ACP permission handling, shared by desktop and remote control. */
+export type AcpPermissionBehavior = "ask" | "auto_accept" | "allow_all";
+
+export function isAcpPermissionBehavior(value: unknown): value is AcpPermissionBehavior {
+  return value === "ask" || value === "auto_accept" || value === "allow_all";
+}
+
 /**
  * Canonical signature for responding to a tool permission prompt.
  * All engines must implement this — unused params can be ignored.

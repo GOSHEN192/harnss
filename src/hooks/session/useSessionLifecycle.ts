@@ -129,6 +129,8 @@ export function useSessionLifecycle({
     setSessionPermissionMode,
     setSessionPlanMode,
     setSessionClaudeModelAndEffort,
+    setSessionEffort,
+    updateSessionSettings,
   } = useSessionSettings({
     refs,
     setters,
@@ -369,6 +371,8 @@ export function useSessionLifecycle({
     setActiveClaudeEffort,
     setActiveClaudeModelAndEffort,
     setSessionClaudeModelAndEffort,
+    setSessionEffort,
+    updateSessionSettings,
     restartAcpSession,
     restartActiveSessionInCurrentWorktree,
     fullRevertSession,

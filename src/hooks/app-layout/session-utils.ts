@@ -21,6 +21,7 @@ export function buildSessionOptions(
     engine,
     agentId: agent?.id ?? "claude-code",
     cachedConfigOptions: agent?.cachedConfigOptions,
+    workingDirectory: agent?.workingDirectory,
   };
 }
 

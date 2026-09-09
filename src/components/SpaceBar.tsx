@@ -19,6 +19,7 @@ import {
 import { resolveLucideIcon } from "@/lib/icon-utils";
 import { SpaceCustomizer } from "./SpaceCustomizer";
 import type { Space } from "@/types";
+import { useTranslation } from "@/lib/i18n";
 
 interface SpaceBarProps {
   spaces: Space[];
@@ -66,6 +67,7 @@ export const SpaceBar = memo(function SpaceBar({
   onOpenSettings,
   draftSpace,
 }: SpaceBarProps) {
+  const { t } = useTranslation();
   const isCreatingSpace = draftSpace != null;
   const sorted = [...spaces].sort((a, b) => a.order - b.order);
   const [contextSpace, setContextSpace] = useState<Space | null>(null);
@@ -175,7 +177,7 @@ export const SpaceBar = memo(function SpaceBar({
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-xs">
-          Settings
+          {t("Settings")}
         </TooltipContent>
       </Tooltip>
 

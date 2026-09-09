@@ -1,10 +1,12 @@
 import { memo } from "react";
-import { ChevronDown, Info, Loader2, PanelLeft, X } from "lucide-react";
+import { ChevronDown, Info, Loader2, PanelLeft, Radio, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isMac } from "@/lib/utils";
 import type { AcpPermissionBehavior } from "@/types";
+import { useTranslation } from "@/lib/i18n";
+import type { RealtimeVoiceControls } from "@/hooks/useRealtimeVoice";
 
 const PERMISSION_MODE_LABELS: Record<string, string> = {
   plan: "Plan",
@@ -36,6 +38,7 @@ interface ChatHeaderProps {
   showDevFill?: boolean;
   onSeedDevExampleConversation?: () => void;
   onSeedDevExampleSpaceData?: () => void;
+  realtimeVoice?: RealtimeVoiceControls;
   /** Close this split pane (renders an X button on the right). */
   onClosePane?: () => void;
 }
@@ -57,8 +60,10 @@ export const ChatHeader = memo(function ChatHeader({
   showDevFill,
   onSeedDevExampleConversation,
   onSeedDevExampleSpaceData,
+  realtimeVoice,
   onClosePane,
 }: ChatHeaderProps) {
+  const { t } = useTranslation();
   const modeLabel = permissionMode ? PERMISSION_MODE_LABELS[permissionMode] : null;
   const acpBehaviorLabel = acpPermissionBehavior
     ? ACP_PERMISSION_BEHAVIOR_LABELS[acpPermissionBehavior]
@@ -70,11 +75,11 @@ export const ChatHeader = memo(function ChatHeader({
 
   // Collect all session detail rows for the unified tooltip
   const detailRows: { label: string; value: string }[] = [];
-  if (model) detailRows.push({ label: "Model", value: model });
-  detailRows.push({ label: "Plan", value: planMode ? "On" : "Off" });
-  if (permissionDisplay) detailRows.push({ label: "Permissions", value: permissionDisplay });
-  if (totalCost > 0) detailRows.push({ label: "Cost", value: `$${totalCost.toFixed(4)}` });
-  if (sessionId) detailRows.push({ label: "Session", value: sessionId });
+  if (model) detailRows.push({ label: t("Model"), value: model });
+  detailRows.push({ label: t("Plan"), value: t(planMode ? "On" : "Off") });
+  if (permissionDisplay) detailRows.push({ label: t("Permissions"), value: t(permissionDisplay) });
+  if (totalCost > 0) detailRows.push({ label: t("Cost"), value: `$${totalCost.toFixed(4)}` });
+  if (sessionId) detailRows.push({ label: t("Session"), value: sessionId });
 
   const hasDetails = detailRows.length > 0;
   const showDevSeedButton = import.meta.env.DEV && !!showDevFill && !!onSeedDevExampleConversation;
@@ -113,13 +118,13 @@ export const ChatHeader = memo(function ChatHeader({
               <div className="space-y-0.5 text-xs">
                 {model && (
                   <div className="flex justify-between gap-4">
-                    <span className="opacity-70">Model</span>
+                    <span className="opacity-70">{t("Model")}</span>
                     <span className="font-mono">{model}</span>
                   </div>
                 )}
                 {permissionDisplay && (
                   <div className="flex justify-between gap-4">
-                    <span className="opacity-70">Permissions</span>
+                    <span className="opacity-70">{t("Permissions")}</span>
                     <span className="font-mono">{permissionDisplay}</span>
                   </div>
                 )}
@@ -145,9 +150,46 @@ export const ChatHeader = memo(function ChatHeader({
         </span>
       ) : null}
 
-      {/* Session info, split view toggle, and pane close */}
-      {(showDevSeedButton || hasDetails || onClosePane) && (
+      {/* Realtime voice status and session info */}
+      {(realtimeVoice || showDevSeedButton || hasDetails || onClosePane) && (
         <div className="ms-auto flex items-center gap-1.5">
+          {realtimeVoice && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className={`no-drag h-6 gap-1 rounded-full px-2 text-[10px] ${
+                    realtimeVoice.status === "connected"
+                      ? "text-emerald-500 hover:bg-emerald-500/10"
+                      : realtimeVoice.status === "starting"
+                        ? "text-amber-500 hover:bg-amber-500/10"
+                        : realtimeVoice.status === "error"
+                          ? "text-destructive hover:bg-destructive/10"
+                          : "text-muted-foreground/50 hover:bg-muted/50"
+                  }`}
+                  onClick={() => void realtimeVoice.toggle()}
+                  disabled={realtimeVoice.status === "starting"}
+                  aria-label="Mac desktop voice"
+                >
+                  <Radio className="h-3 w-3" />
+                  {realtimeVoice.status === "connected"
+                    ? "Mac Voice"
+                    : realtimeVoice.status === "starting"
+                      ? "Mac Starting"
+                      : realtimeVoice.status === "error"
+                        ? "Mac Error"
+                        : "Mac Voice"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {realtimeVoice.error
+                  ?? (realtimeVoice.enabled
+                    ? (realtimeVoice.status === "connected" ? "Stop Mac desktop voice" : "Start Mac desktop voice")
+                    : "Enable Realtime Voice in Settings → General")}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {onClosePane && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -161,7 +203,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
-                Close pane
+                {t("Close pane")}
               </TooltipContent>
             </Tooltip>
           )}
@@ -173,16 +215,16 @@ export const ChatHeader = memo(function ChatHeader({
                   size="sm"
                   className="no-drag h-6 gap-1 px-2 text-[10px]"
                 >
-                  Dev Fill
+                  {t("Dev Fill")}
                   <ChevronDown className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={onSeedDevExampleConversation}>
-                  Fill current chat
+                  {t("Fill current chat")}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={onSeedDevExampleSpaceData}>
-                  Fill current space (3 projects, 10 chats)
+                  {t("Fill current space (3 projects, 10 chats)")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

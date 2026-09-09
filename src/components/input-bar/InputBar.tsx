@@ -12,6 +12,7 @@ import {
   Mic,
   MicOff,
   Paperclip,
+  Radio,
   Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ import { MentionPicker } from "./MentionPicker";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
 import { CommandPicker } from "./CommandPicker";
 import { useCommandAutocomplete } from "./CommandPicker";
+import type { RealtimeVoiceControls } from "@/hooks/useRealtimeVoice";
 
 export interface InputBarProps {
   onSend: (text: string, images?: ImageAttachment[], displayText?: string) => void;
@@ -111,6 +113,8 @@ export interface InputBarProps {
   onRemoveGrabbedElement?: (id: string) => void;
   /** Open ACP Agents settings */
   onManageACPs?: () => void;
+  /** Additive realtime voice bridge controls. */
+  realtimeVoice?: RealtimeVoiceControls;
 }
 
 export const InputBar = memo(function InputBar({
@@ -150,6 +154,7 @@ export const InputBar = memo(function InputBar({
   grabbedElements,
   onRemoveGrabbedElement,
   onManageACPs,
+  realtimeVoice,
 }: InputBarProps) {
   // ── Core state ──
   const [hasContent, setHasContent] = useState(false);
@@ -891,6 +896,40 @@ export const InputBar = memo(function InputBar({
                 <TooltipContent side="top">{speech.nativeHint}</TooltipContent>
               </Tooltip>
             ) : null}
+
+            {/* Realtime voice button, intentionally separate from dictation. */}
+            {realtimeVoice && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => void realtimeVoice.toggle()}
+                    disabled={realtimeVoice.status === "starting"}
+                    className={`rounded-lg font-normal transition-colors duration-150 ${
+                      realtimeVoice.status === "connected"
+                        ? "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/15"
+                        : realtimeVoice.status === "starting"
+                          ? "text-amber-500"
+                          : realtimeVoice.status === "error"
+                            ? "text-destructive"
+                            : realtimeVoice.enabled
+                              ? "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                              : "text-muted-foreground/40 hover:bg-muted/30"
+                    }`}
+                    aria-label="Mac desktop voice"
+                  >
+                    <Radio className={`size-3.5 ${realtimeVoice.status === "connected" ? "animate-pulse" : ""}`} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {realtimeVoice.error
+                    ?? (realtimeVoice.enabled
+                      ? (realtimeVoice.status === "connected" ? "Stop Mac desktop voice" : "Start Mac desktop voice")
+                      : "Enable Realtime Voice in Settings → General")}
+                </TooltipContent>
+              </Tooltip>
+            )}
 
             <span
               className="mx-0.5 h-3.5 w-px shrink-0 bg-border/20"
