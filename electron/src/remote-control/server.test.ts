@@ -71,6 +71,9 @@ describe("remote control server", () => {
     expect(scriptText).toContain("void loadSessions();if(selectedId)void loadSnapshot(selectedId)");
     // 2026-09-09：COVE 语音页已移除（语音由 L'Agents 原生 App 承担），
     // 页面不再有入口，/cove/ 静态资源与 /voice WS 升级均应拒绝。
+    // 客户端 JS 必须可解析：此前按钮字符串引号被误删，整页停在 boot 屏，
+    // 子串断言抓不到语法错误，这里强制编译一次（不执行，无需 DOM）。
+    expect(() => new Function(scriptText)).not.toThrow();
     expect(scriptText).not.toContain("/cove/");
 
     const covePage = await fetch(`http://127.0.0.1:${port}/cove/`, {
