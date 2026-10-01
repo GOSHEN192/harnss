@@ -64,9 +64,17 @@ import { RemoteControlBridge } from "./remote-control/bridge";
 import { RemoteControlServer } from "./remote-control/server";
 import { TelegramChannel } from "./telegram/channel";
 
+// Development runs may use a separate profile so the current source app can be
+// tested beside the installed Harnss app without sharing its single-instance lock.
+const devUserDataPath = process.env.HARNSS_DEV_USER_DATA;
+if (devUserDataPath) {
+  app.setName("Harnss Dev");
+  app.setPath("userData", path.resolve(devUserDataPath));
+}
+
 // --- Single instance lock（2026-09-09）---
 // LaunchAgent 常驻拉起 + 用户手动点 Dock 会产生第二实例；无锁时两个实例
-// 会抢 8787 端口（remote control server 绑定失败）。拿到锁的实例继续跑，
+// 会抢 Remote Control 端口（remote control server 绑定失败）。拿到锁的实例继续跑，
 // 后启动的实例直接退出。
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -87,7 +95,10 @@ app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); // of
 
 // --- Liquid Glass command-line switches ---
 if (glassEnabled) {
-  app.commandLine.appendSwitch("remote-debugging-port", "9222");
+  app.commandLine.appendSwitch(
+    "remote-debugging-port",
+    process.env.HARNSS_DEVTOOLS_PORT || "9222",
+  );
   app.commandLine.appendSwitch("remote-allow-origins", "*");
 }
 

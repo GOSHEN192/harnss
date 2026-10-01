@@ -58,10 +58,11 @@ export class RemoteControlBridge {
     const requestId = randomUUID();
     const message: RemoteRendererRequest = { requestId, method, payload };
     return new Promise((resolve, reject) => {
+      const timeoutMs = method === "sessions.create" ? 30_000 : 15_000;
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error("Remote renderer request timed out"));
-      }, 15_000);
+      }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       mainWindow.webContents.send("remote:request", message);
     });

@@ -37,10 +37,15 @@ type RemoteSessionManager = {
   activateSession: (sessionId: string) => Promise<void>;
   interruptSession: (sessionId: string) => Promise<void>;
   retrySession: (sessionId: string) => Promise<void>;
+  renameSession: (sessionId: string, title: string) => void;
   createSession: (
     projectId: string,
     options?: { engine?: "claude" | "codex" | "acp"; model?: string; agentId?: string },
   ) => Promise<void>;
+  createRemoteSession: (
+    projectId: string,
+    options?: { engine?: "claude" | "codex" | "acp"; model?: string; agentId?: string },
+  ) => Promise<RemoteSessionSummary>;
   acpConfigOptions: ACPConfigOption[];
   resolveEngineIcon: (engine: string | undefined, agentId: string | undefined) => string | undefined;
 };
@@ -131,6 +136,17 @@ export function useRemoteControlBridge(
         try {
           const currentManager = managerRef.current;
           const payload = isRecord(request.payload) ? request.payload : {};
+          if (request.method === "projects.list") {
+            respond({
+              ok: true,
+              data: projectsRef.current.map((project) => ({
+                id: project.id,
+                name: project.name,
+              })),
+            });
+            return;
+          }
+
           if (request.method === "sessions.list") {
             const projectNames = new Map(projectsRef.current.map((project) => [project.id, project.name]));
             respond({
@@ -168,18 +184,34 @@ export function useRemoteControlBridge(
               throw new Error("Project not found");
             }
             const engine = payload.engine === "acp" || payload.engine === "codex" ? payload.engine : "claude";
-            await currentManager.createSession(projectId, {
+            const session = await currentManager.createRemoteSession(projectId, {
               engine,
               ...(typeof payload.model === "string" ? { model: payload.model } : {}),
               ...(typeof payload.agentId === "string" ? { agentId: payload.agentId } : {}),
             });
-            respond({ ok: true, data: { accepted: true } });
+            respond({
+              ok: true,
+              data: {
+                accepted: true,
+                sessionId: session.id,
+                session,
+                status: "ready",
+              },
+            });
             return;
           }
 
           const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : "";
           if (!sessionId || !currentManager.sessions.some((session) => session.id === sessionId)) {
             throw new Error("Session not found");
+          }
+
+          if (request.method === "sessions.rename") {
+            if (typeof payload.title !== "string" || !payload.title.trim()) throw new Error("Session title is required");
+            currentManager.renameSession(sessionId, payload.title.trim().slice(0, 500));
+            scheduleSnapshot(sessionId);
+            respond({ ok: true, data: { accepted: true } });
+            return;
           }
 
           if (request.method === "sessions.get") {

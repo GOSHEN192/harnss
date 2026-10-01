@@ -2,13 +2,31 @@ import type { ACPConfigOption } from "./acp";
 import type { AcpPermissionBehavior } from "./engine";
 
 export type RemoteRequestMethod =
+  | "projects.list"
   | "sessions.list"
   | "sessions.get"
   | "sessions.send"
   | "sessions.approve"
   | "sessions.update-settings"
   | "sessions.action"
-  | "sessions.create";
+  | "sessions.create"
+  | "sessions.rename";
+
+export interface RemoteProjectSummary {
+  id: string;
+  name: string;
+}
+
+export interface RemoteAcceptedResult {
+  accepted: true;
+}
+
+export interface RemoteSessionCreateResult {
+  accepted: true;
+  sessionId: string;
+  session: RemoteSessionSummary;
+  status: "ready" | "starting";
+}
 
 export interface RemoteModelOption {
   value: string;
@@ -144,3 +162,45 @@ export interface RemoteSessionSettingsInput {
 }
 
 export type RemoteSessionAction = "activate" | "interrupt" | "retry";
+
+export type RemoteCapabilityStatus =
+  | "implemented"
+  | "partial"
+  | "intentional-divergence"
+  | "desktop-only"
+  | "security-limited";
+
+export interface RemoteCapability {
+  id: string;
+  label: string;
+  status: RemoteCapabilityStatus;
+  method?: RemoteRequestMethod;
+  note: string;
+}
+
+/**
+ * Auditable boundary between the desktop surface and the authenticated Remote WebUI.
+ * Keep unsafe or intentionally removed capabilities explicit instead of presenting
+ * disabled controls as if they were parity-complete.
+ */
+export const REMOTE_CAPABILITY_MANIFEST: readonly RemoteCapability[] = [
+  { id: "projects.read", label: "Project list", status: "implemented", method: "projects.list", note: "Names only; local paths stay in the desktop app." },
+  { id: "projects.mutation", label: "Project CRUD, icons, folders, and spaces", status: "security-limited", note: "Not exposed until mutation scope and confirmation policy are defined." },
+  { id: "sessions.control", label: "Session list, history, messages, approvals, settings, and actions", status: "implemented", method: "sessions.get", note: "Authenticated same-origin HTTP plus revision-guarded WebSocket updates." },
+  { id: "sessions.create", label: "Create Claude, Codex, or ACP sessions", status: "implemented", method: "sessions.create", note: "Credentials and authentication remain desktop-only." },
+  { id: "sessions.rename", label: "Rename sessions", status: "implemented", method: "sessions.rename", note: "Bounded title mutation through the existing desktop manager." },
+  { id: "sessions.delete", label: "Delete sessions", status: "security-limited", note: "Irreversible deletion is withheld pending explicit target, scope, and recovery policy." },
+  { id: "attachments", label: "Image attachments", status: "partial", note: "Desktop and renderer plumbing exist; Remote HTTP/UI transport remains bounded and unopened." },
+  { id: "files", label: "Files and project files", status: "desktop-only", note: "File reads, writes, rename, trash, and revert are not exposed to the browser." },
+  { id: "browser", label: "Browser panel and browser grab", status: "desktop-only", note: "No remote browser or fake artifact behavior." },
+  { id: "mcp", label: "MCP status, auth, and configuration", status: "security-limited", note: "Credentials and configuration mutation remain desktop-only." },
+  { id: "todo", label: "Todo/task panel", status: "desktop-only", note: "Remote snapshots carry generic tool activity only." },
+  { id: "background-agents", label: "Background agents", status: "partial", note: "Subagent activity can appear in messages; stop, dismiss, and transcript controls are not exposed." },
+  { id: "jira", label: "Jira board", status: "desktop-only", note: "External account and issue mutation remain in the desktop app." },
+  { id: "tools", label: "Terminal, Git, and tool panels", status: "desktop-only", note: "No remote shell or repository mutation route." },
+  { id: "revert", label: "File and full-session revert", status: "security-limited", note: "Destructive filesystem mutation requires a separate step-up authorization policy." },
+  { id: "compaction", label: "Context compaction", status: "desktop-only", note: "Remote displays context usage but does not trigger compaction." },
+  { id: "slash-commands", label: "Slash command catalog", status: "desktop-only", note: "Remote composer intentionally remains plain text." },
+  { id: "voice", label: "Web voice, Web Speech, and floating ball", status: "intentional-divergence", note: "Removed from Remote WebUI; native iOS/App voice remains unchanged." },
+  { id: "credentials", label: "API keys, Codex/ACP auth, and MCP credentials", status: "security-limited", note: "Never sent to or stored in the browser." },
+] as const;

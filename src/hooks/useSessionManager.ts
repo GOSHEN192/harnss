@@ -9,7 +9,7 @@ import type {
 } from "@shared/types/remote";
 import { toMcpStatusState } from "../lib/mcp-utils";
 import { getSessionEngineIcon } from "../lib/engine-icons";
-import { toChatSession } from "../lib/session/records";
+import { buildPersistedSession, toChatSession } from "../lib/session/records";
 import { BackgroundSessionStore } from "../lib/background/session-store";
 import { createSystemMessage, createUserMessage } from "../lib/message-factory";
 import { buildSdkContent } from "../lib/engine/protocol";
@@ -29,6 +29,10 @@ import {
   type SharedSessionSetters,
   type EngineHooks,
   buildCodexCollabMode,
+  normalizeCodexModels,
+  getCodexApprovalPolicy,
+  getCodexSandboxMode,
+  getEffectiveClaudePermissionMode,
 } from "./session/types";
 import { useSessionPane } from "./session/useSessionPane";
 import { useMessageQueue } from "./session/useMessageQueue";
@@ -705,6 +709,20 @@ export function useSessionManager(
     let acpConfigOptions = active && acp.configOptionsSessionId === sessionId
       ? acp.configOptions
       : (active ? [] : (background?.configOptions ?? []));
+    let codexModels = codexRawModelsRef.current;
+    if (engineId === "codex" && codexModels.length === 0) {
+      try {
+        const result = await window.claude.codex.listModels();
+        const loaded = normalizeCodexModels(result.models ?? []);
+        if (loaded.length > 0) {
+          codexModels = loaded;
+          codexRawModelsRef.current = loaded;
+          setCodexRawModels((previous) => previous.length > 0 ? previous : loaded);
+        }
+      } catch {
+        // A disconnected Codex app-server may not expose its catalog.
+      }
+    }
     if (engineId === "acp" && installedAgentsRef.current === undefined) {
       try {
         installedAgentsRef.current = await window.claude.agents.list();
@@ -741,13 +759,16 @@ export function useSessionManager(
     // ACP sessions carry no model field — surface the current model config option instead.
     const acpModelOption = engineId === "acp" ? acpConfigOptions.find((o) => o.id === "model") : undefined;
     const acpModelChoices = (acpModelOption?.options ?? []).flatMap((o) => ("value" in o ? [o] : (o.options ?? [])));
-    const acpModelLabel = acpModelOption
-      ? (acpModelChoices.find((o) => o.value === acpModelOption.currentValue)?.name ?? acpModelOption.currentValue ?? "")
-      : "";
+    const acpModelValue = acpModelOption?.currentValue ?? "";
     const availableModels = engineId === "codex"
-      ? toRemoteModelOptions(codexRawModelsRef.current)
+      ? toRemoteModelOptions(codexModels)
       : engineId === "acp"
-        ? []
+        ? acpModelChoices.map((option) => ({
+            value: option.value,
+            displayName: option.name,
+            ...(option.description ? { description: option.description } : {}),
+            ...(option.value === acpModelValue ? { isDefault: true } : {}),
+          }))
         : toRemoteModelOptions(active ? remoteSupportedModelsRef.current : cachedModelsRef.current);
     const summary: RemoteSessionSummary = {
       id: session.id,
@@ -759,8 +780,8 @@ export function useSessionManager(
       ...(session.engine ? { engine: session.engine } : {}),
       ...(session.agentId ? { agentId: session.agentId } : {}),
       ...(engineIcon ? { engineIcon } : {}),
-      ...((session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelLabel)
-        ? { model: session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelLabel }
+      ...((session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelValue)
+        ? { model: session.model || (active ? sessionInfoRef.current?.model : undefined) || acpModelValue }
         : {}),
       ...(session.effort ? { effort: session.effort } : {}),
       ...((session.permissionMode || (active ? sessionInfoRef.current?.permissionMode : undefined))
@@ -831,6 +852,156 @@ export function useSessionManager(
     };
   }, []);
 
+  const createRemoteSession = useCallback(async (
+    projectId: string,
+    options: { engine?: "claude" | "codex" | "acp"; model?: string; agentId?: string } = {},
+  ): Promise<RemoteSessionSummary> => {
+    const project = findProject(projectId);
+    if (!project) throw new Error("Project not found");
+
+    const engineId = options.engine ?? "claude";
+    const mcpServers = await window.claude.mcp.list(project.id);
+    let sessionId: string | undefined;
+    let sessionModel = options.model;
+    let agentSessionId: string | undefined;
+    let codexThreadId: string | undefined;
+    let cachedConfigOptions: ACPConfigOption[] | undefined;
+
+    if (engineId === "claude") {
+      const result = await window.claude.start({
+        cwd: getProjectCwd(project),
+        ...(options.model ? { model: options.model } : {}),
+        permissionMode: getEffectiveClaudePermissionMode({ model: options.model }),
+        mcpServers,
+      });
+      if (result.error || !result.sessionId) {
+        throw new Error(result.error || "Failed to start Claude session");
+      }
+      sessionId = result.sessionId;
+    } else if (engineId === "codex") {
+      const result = await window.claude.codex.start({
+        cwd: getProjectCwd(project),
+        ...(options.model ? { model: options.model } : {}),
+        ...(getCodexApprovalPolicy({}) ? { approvalPolicy: getCodexApprovalPolicy({}) } : {}),
+        ...(getCodexSandboxMode({}) ? { sandbox: getCodexSandboxMode({}) } : {}),
+      });
+      if (result.needsAuth) {
+        if (result.sessionId) await window.claude.codex.stop(result.sessionId);
+        throw new Error("Codex authentication is required in L'Agents before creating a remote session");
+      }
+      if (result.error || !result.sessionId) {
+        throw new Error(result.error || "Failed to start Codex session");
+      }
+      sessionId = result.sessionId;
+      codexThreadId = result.threadId;
+      sessionModel = result.selectedModel ?? sessionModel;
+    } else {
+      if (!options.agentId) throw new Error("ACP agentId is required");
+      if (options.model) throw new Error("ACP model selection uses agent configuration and is not supported during creation");
+      const result = await window.claude.acp.start({
+        agentId: options.agentId,
+        cwd: getProjectCwd(project),
+        mcpServers,
+      });
+      if ("authRequired" in result && result.authRequired) {
+        if (result.sessionId) await window.claude.acp.stop(result.sessionId);
+        throw new Error("ACP authentication is required in L'Agents before creating a remote session");
+      }
+      if (("error" in result && result.error) || !("sessionId" in result) || !result.sessionId) {
+        throw new Error(("error" in result ? result.error : undefined) || "Failed to start ACP session");
+      }
+      sessionId = result.sessionId;
+      agentSessionId = "agentSessionId" in result ? result.agentSessionId : undefined;
+      cachedConfigOptions = "configOptions" in result ? result.configOptions : undefined;
+    }
+
+    const id = sessionId;
+    if (!id) throw new Error("Session did not return an id");
+    if (sessionsRef.current.some((entry) => entry.id === id)) {
+      try {
+        if (engineId === "acp") await window.claude.acp.stop(id);
+        else if (engineId === "codex") await window.claude.codex.stop(id);
+        else await window.claude.stop(id, "remote_create_duplicate_id");
+      } catch {
+        // The duplicate ID is still rejected even if process cleanup fails.
+      }
+      throw new Error("Session ID already exists");
+    }
+    const now = Date.now();
+    const session: ChatSession = {
+      id,
+      projectId: project.id,
+      title: "New Chat",
+      createdAt: now,
+      lastMessageAt: now,
+      ...(sessionModel ? { model: sessionModel } : {}),
+      totalCost: 0,
+      isActive: false,
+      engine: engineId,
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+      ...(engineId === "acp" ? { workingDirectory: getProjectCwd(project) } : {}),
+      ...(agentSessionId ? { agentSessionId } : {}),
+      ...(codexThreadId ? { codexThreadId } : {}),
+      ...(cachedConfigOptions?.length ? { cachedConfigOptions } : {}),
+    };
+
+    liveSessionIdsRef.current.add(id);
+    backgroundStoreRef.current.initFromState(id, {
+      messages: [],
+      isProcessing: false,
+      isConnected: true,
+      isCompacting: false,
+      sessionInfo: null,
+      totalCost: 0,
+      contextUsage: null,
+      pendingPermission: null,
+      rawAcpPermission: null,
+      slashCommands: [],
+      configOptions: cachedConfigOptions ?? [],
+    });
+    try {
+      const saveResult = await window.claude.sessions.save(buildPersistedSession(session, [], 0, null));
+      if (saveResult?.error) throw new Error(saveResult.error);
+    } catch (error) {
+      suppressNextSessionCompletion(id);
+      liveSessionIdsRef.current.delete(id);
+      backgroundStoreRef.current.delete(id);
+      try {
+        if (engineId === "acp") await window.claude.acp.stop(id);
+        else if (engineId === "codex") await window.claude.codex.stop(id);
+        else await window.claude.stop(id, "remote_create_persist_failed");
+      } catch {
+        // Preserve the persistence error; the exit handler will finish cleanup.
+      }
+      throw error;
+    }
+
+    const nextSessions = [
+      session,
+      ...sessionsRef.current.filter((entry) => entry.id !== session.id),
+    ];
+    sessionsRef.current = nextSessions;
+    setSessions(nextSessions);
+
+    const acpModel = cachedConfigOptions?.find((option) => option.id === "model")?.currentValue;
+    return {
+      id: session.id,
+      projectId: session.projectId,
+      projectName: project.name,
+      title: session.title,
+      createdAt: session.createdAt,
+      lastMessageAt: session.lastMessageAt,
+      engine: session.engine,
+      ...(session.agentId ? { agentId: session.agentId } : {}),
+      ...(resolveEngineIcon(session.engine, session.agentId)
+        ? { engineIcon: resolveEngineIcon(session.engine, session.agentId) }
+        : {}),
+      ...(session.model || acpModel ? { model: session.model || acpModel } : {}),
+      ...(cachedConfigOptions?.length ? { availableConfigOptions: cachedConfigOptions } : {}),
+      ...(session.isProcessing !== undefined ? { isProcessing: session.isProcessing } : {}),
+    };
+  }, [findProject, getProjectCwd, resolveEngineIcon, setSessions]);
+
   const sendToSession = useCallback(async (
     sessionId: string,
     text: string,
@@ -845,16 +1016,11 @@ export function useSessionManager(
     }
 
     // Live background sessions can receive a message without changing the
-    // desktop's active tab. Dead sessions fall back to the normal revival path.
+    // desktop's active tab. Do not revive a dead session through switchSession:
+    // that steals the desktop focus and makes the remote request non-local.
+    // A dedicated background revive operation must be used once available.
     if (!liveSessionIdsRef.current.has(sessionId)) {
-      await switchSession(sessionId);
-      const deadline = Date.now() + 3_000;
-      while (activeSessionIdRef.current !== sessionId && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (activeSessionIdRef.current !== sessionId) throw new Error("Could not activate session");
-      await send(text, images);
-      return;
+      throw new Error("Session is offline. Open it in L'Agents before sending a message.");
     }
 
     const background = backgroundStoreRef.current.get(sessionId);
@@ -907,7 +1073,7 @@ export function useSessionManager(
       )));
       throw error;
     }
-  }, [send, switchSession]);
+  }, [send]);
 
   const activateSession = useCallback(async (sessionId: string): Promise<void> => {
     const session = sessionsRef.current.find((entry) => entry.id === sessionId);
@@ -1067,6 +1233,7 @@ export function useSessionManager(
     isDraft,
     draftProjectId,
     createSession,
+    createRemoteSession,
     switchSession,
     deselectSession,
     deleteSession,

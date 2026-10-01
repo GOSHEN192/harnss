@@ -208,8 +208,56 @@ export const GeneralSettings = memo(function GeneralSettings({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-6 py-2">
+          {/* ── Remote Control section ── */}
+          <SettingsSection icon={Radio} label="Remote Control" first>
+            <SettingRow
+              label="Enable remote control"
+              description="Expose authenticated session control on localhost. The pairing token appears here when Remote Control is enabled."
+            >
+              <Switch checked={remoteEnabled} onCheckedChange={handleRemoteEnabledChange} />
+            </SettingRow>
+            {remoteEnabled ? (
+              <>
+                <SettingRow label="Server port">
+                  <SettingsSelect
+                    value={String(remotePort)}
+                    onValueChange={(value) => handleRemotePortChange(Number(value))}
+                    options={[8787, 8788, 8790, 8989].map((port) => ({
+                      value: String(port),
+                      label: String(port),
+                    }))}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="Pairing token"
+                  description={t("Copy this token into the local Remote page. It is only shown in Harnss Settings.")}
+                >
+                  <div className="flex max-w-[15rem] items-center gap-2">
+                    <code className="min-w-0 select-all truncate text-[11px] text-muted-foreground">{remoteToken || "…"}</code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void window.claude.writeClipboardText(remoteToken)}
+                      disabled={!remoteToken}
+                      title={t("Copy pairing token")}
+                    >
+                      {t("Copy pairing token")}
+                    </Button>
+                  </div>
+                </SettingRow>
+                <p className="rounded-md border border-foreground/[0.08] bg-foreground/[0.025] px-3 py-2 text-xs text-muted-foreground">
+                  {t("Open the local Remote page at http://127.0.0.1:{port}, then paste the pairing token there.").replace("{port}", String(remotePort))}
+                </p>
+              </>
+            ) : (
+              <p className="rounded-md border border-foreground/[0.08] bg-foreground/[0.025] px-3 py-2 text-xs text-muted-foreground">
+                {t("Turn on Enable remote control to reveal the pairing token and start the localhost Remote server.")}
+              </p>
+            )}
+          </SettingsSection>
+
           {/* ── Updates section ── */}
-          <SettingsSection icon={Download} label="Updates" first>
+          <SettingsSection icon={Download} label="Updates">
             <SettingRow
               label="Include pre-release updates"
               description="Receive beta versions with the latest features. Disable to only get stable releases."
@@ -235,45 +283,6 @@ export const GeneralSettings = memo(function GeneralSettings({
                 ]}
               />
             </SettingRow>
-          </SettingsSection>
-
-          <SettingsSection icon={Radio} label="Remote Control">
-            <SettingRow
-              label="Enable remote control"
-              description="Expose authenticated session control on localhost. Use the HTTPS Cloudflare Tunnel hint below for iPhone Safari."
-            >
-              <Switch checked={remoteEnabled} onCheckedChange={handleRemoteEnabledChange} />
-            </SettingRow>
-            {remoteEnabled && (
-              <>
-                <SettingRow label="Server port">
-                  <SettingsSelect
-                    value={String(remotePort)}
-                    onValueChange={(value) => handleRemotePortChange(Number(value))}
-                    options={[8787, 8788, 8790, 8989].map((port) => ({
-                      value: String(port),
-                      label: String(port),
-                    }))}
-                  />
-                </SettingRow>
-                <SettingRow
-                  label="Pairing token"
-                  description={t("Use Cloudflare Tunnel to access this securely: cloudflared tunnel --url http://127.0.0.1:{port}").replace("{port}", String(remotePort))}
-                >
-                  <div className="flex max-w-[15rem] items-center gap-2">
-                    <code className="min-w-0 truncate text-[11px] text-muted-foreground">{remoteToken || "…"}</code>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void window.claude.writeClipboardText(remoteToken)}
-                      disabled={!remoteToken}
-                    >
-                      {t("Copy")}
-                    </Button>
-                  </div>
-                </SettingRow>
-              </>
-            )}
           </SettingsSection>
 
           <SettingsSection icon={Send} label="Telegram">
